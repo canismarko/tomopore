@@ -33,6 +33,21 @@ Matrix3D *tp_matrixmalloc(DIM n_slices, DIM n_rows, DIM n_columns) {
 }
 
 
+void roll_buffer(Matrix3D *buffer)
+{
+  uint64_t old_idx, new_idx;
+  for (DIM i=0; i < (buffer->nslices-1); i++) {
+    for (DIM j=0; j < buffer->nrows; j++) {
+      for (DIM k=0; k < buffer->ncolumns; k++) {
+	old_idx = tp_indices(buffer, i, j, k);
+	new_idx = tp_indices(buffer, i+1, j, k);
+	buffer->arr[old_idx] = buffer->arr[new_idx];
+      }
+    }
+  }
+}
+
+
 char tp_apply_filter
 (hid_t src_ds, hid_t dest_ds, Matrix3D *kernel,
  void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count)
@@ -122,13 +137,7 @@ char tp_apply_filter
       new_islc = dL;
       printf("islc: %02d, diskslc: %02d, buffslc: %02lld, new_islc: %02d\n", islc, new_diskslc, read_mem_starts[0], new_islc);
       // Move each slice down
-      for (DIM i=0; i<(kernel->nslices-1); i++) {
-	for (DIM j=0; j<working_buffer->nrows; j++) {
-	  for (DIM k=0; k<working_buffer->ncolumns; k++) {
-	    working_buffer->arr[i,j,k] = working_buffer->arr[i+1,j,k];
-	  }
-	}
-      }
+      roll_buffer(working_buffer);
       // Get a new last slice
       read_file_starts[0] = new_diskslc;
       H5Sselect_hyperslab(src_filespace_id,   // space_id,

@@ -46,6 +46,8 @@ void tp_box(Matrix3D *kernel);
 
 uint64_t tp_indices(Matrix3D *vol, DIM islice, DIM irow, DIM icolumn);
 
+void roll_buffer(Matrix3D *buffer);
+
 /* Applied kernel functions */
 /* ======================== */
 
