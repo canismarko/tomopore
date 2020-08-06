@@ -249,7 +249,56 @@ void tp_box(Matrix3D *kernel) {
 }
 
 
-// Take a buffer of data, and apply the kernel to each row/column pixel for the given slice index
-float tp_apply_kernel(Matrix3D *arr, Matrix3D *kernel, uint16_t islc, uint16_t irow, uint16_t icol) {
-  
+/* Take a buffer of data, and apply the kernel to each row/column pixel for the given slice index
+     *islc*, *irow*, *icol* give the current position in the *subvolume* buffer */
+float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow, DIM icol) {
+  // i, j, k -> indices of subvolume
+  // l, m, n -> indices of kernel
+  // dL, dM, dN -> reach of the kernel, so for a 3x3x3 kernel, each is (3-1)/2 = 1
+  // Calculate some values to relate between the kernel and the subvolume
+  DIM dL = (kernel->nslices - 1) / 2;
+  DIM dM = (kernel->nrows - 1) / 2;
+  DIM dN = (kernel->ncolumns - 1) / 2;
+  DIM i, j, k;
+  DTYPE kernel_val, volume_val;
+  int is_in_bounds;
+  double running_total = 0;
+  uint64_t running_count = 0;
+  // Iterate over the kernel dimensions, then apply them to the main arr
+  for (DIM l=0; l < kernel->nslices; l++) {
+    for (DIM m=0; m < kernel->nrows; m++) {
+      for (DIM n=0; n < kernel->ncolumns; n++) {
+	// Calculate relative coordinates in the arr matrix
+	i = islc + (l - dL);
+	j = irow + (m - dM);
+	k = icol + (n - dN);
+	// Determine if the new coordinates are in bounds for the subvolume
+	is_in_bounds = ((i >= 0) && (i < subvolume->nslices) &&
+			(j >= 0) && (j < subvolume->nrows) &&
+			(k >= 0) && (k < subvolume->ncolumns));
+	// Retrieve the values from arrays and perform the actual
+	// operation
+	if (is_in_bounds) {
+	  volume_val = subvolume->arr[tp_indices(subvolume, i, j, k)];
+	  kernel_val = kernel->arr[tp_indices(kernel, l, m, n)];
+	  // TODO: Do a thing
+	  tp_apply_max(volume_val, kernel_val, &running_total, &running_count);
+	}
+      }
+    }
+  }
+  return (float) running_total;
+}
+
+
+void tp_apply_max(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count)
+{
+  if (kernel_val > 0) {
+    // Save this value as the new maximum if it's bigger than the old one
+    if (volume_val > *running_total) {
+      *running_total = volume_val;
+    }
+    // Increment the counter, even though it doesn't really matter for calculating maxima
+    *running_count++;
+  }
 }

@@ -24,7 +24,7 @@ typedef struct {
 } Vector;
 
 // Function declarations
-float tp_apply_kernel(Matrix3D *arr, Matrix3D *kernel, uint16_t islc, uint16_t irow, uint16_t icol);
+float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow, DIM icol);
 
 Matrix3D *tp_matrixmalloc(DIM n_slices, DIM n_rows, DIM n_columns);
 
@@ -37,3 +37,15 @@ void tp_ellipsoid(Matrix3D *kernel);
 void tp_box(Matrix3D *kernel);
 
 uint64_t tp_indices(Matrix3D *vol, DIM islice, DIM irow, DIM icolumn);
+
+/* Applied kernel functions */
+/* ======================== */
+
+/* Each one of these functions can be given to ``tp_apply_kernel`` to */
+/* calculate the metric for that pixel and apply to it to the running */
+/* total. They must all have matching signatures, though do no */
+/* necessarily have to use all the values that are given. *running_count* */
+/* is intended to hold the number of inputs that have been processed and */
+/* can be useful when calculating means, etc. */
+
+void tp_apply_max(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count);
