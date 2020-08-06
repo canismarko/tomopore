@@ -56,26 +56,32 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds) {
   /* DTYPE volume_buffer[n_slcs][n_rows][n_cols]; */
   Matrix3D *volume_buffer = tp_matrixmalloc(n_slcs, n_rows, n_cols);
   DTYPE pore_slice_buffer[n_rows][n_cols];
-  // Load the first kernel-height slices worth of data from disk to memory
-  hid_t filespace_id = H5Dget_space(volume_ds);
-  hsize_t starts[3] = {0, 0, 0};
+  // Prepare HDF5 dataspaces for reading and writing
   hsize_t strides[3] = {1, 1, 1};
   hsize_t counts[3] = {1, 1, 1};
-  hsize_t blocks[3] = {n_slcs, n_rows, n_cols};
-  hid_t memspace_id = H5Screate_simple(RANK, blocks, NULL);
-  H5Sselect_hyperslab(filespace_id,   // space_id,
+  hid_t vol_filespace_id = H5Dget_space(volume_ds);
+  hid_t pores_filespace_id = H5Dget_space(pores_ds);
+  hsize_t write_blocks[3] = {1, n_rows, n_cols};
+  hsize_t write_blocks_mem[2] = {n_rows, n_cols};
+  hid_t vol_memspace_id;
+  hid_t pores_memspace_id = H5Screate_simple(RANK-1, write_blocks_mem, NULL);
+  // Load the first kernel-height slices worth of data from disk to memory
+  hsize_t starts[3] = {0, 0, 0}; // Gets update as new rows are read
+  hsize_t read_blocks[3] = {n_slcs, n_rows, n_cols}; // Gets changed to {1, ...} after first read
+  vol_memspace_id = H5Screate_simple(RANK, read_blocks, NULL);
+  H5Sselect_hyperslab(vol_filespace_id,   // space_id,
 		      H5S_SELECT_SET, // op,
 		      starts,         // start
 		      strides,        // stride
 		      counts,         // count
-		      blocks          // block
+		      read_blocks     // block
 		      );
-  herr_t error = H5Dread(volume_ds,        // dataset_id
-			 H5T_NATIVE_FLOAT, // mem_type_id
-			 memspace_id,      // mem_space_id
-			 filespace_id,     // file_space_id
-			 H5P_DEFAULT,      // xfer_plist_id
-			 volume_buffer     // buffer to hold the data
+  herr_t error = H5Dread(volume_ds,         // dataset_id
+			 H5T_NATIVE_FLOAT,  // mem_type_id
+			 vol_memspace_id,  // mem_space_id
+			 vol_filespace_id,      // file_space_id
+			 H5P_DEFAULT,       // xfer_plist_id
+			 volume_buffer->arr // buffer to hold the data
 			 );
   if (error < 0) {
     fprintf(stderr, "Failed to read dataset: %d\n", error);
@@ -95,9 +101,45 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds) {
       }
     }
     // Write the slice to the HDF5 dataset
+    starts[0] = islc;
+    H5Sselect_hyperslab(pores_filespace_id, // space_id,
+			H5S_SELECT_SET,     // op,
+			starts,             // start
+			strides,            // stride
+			counts,             // count
+			write_blocks        // block
+			);
+    hssize_t    size;
+    /* Print sizes of buffers to save */
+    /* size = H5Sget_select_npoints (pores_filespace_id); */
+    /* printf ("pores_filespace_id size: %lli\n", size); */
+    /* size = H5Sget_select_npoints (pores_memspace_id); */
+    /* printf ("pores_memspace_id size: %lli\n", size); */
+    /* Print the buffer contents */
+    printf("Saving buffer: [\n");
+    for (DIM j=0; j<n_rows; j++) {
+      printf("  [");
+      for (DIM k=0; k<n_cols; k++) {
+	printf("%.2f, ", pore_slice_buffer[j][k]);
+      }
+      printf("],\n");
+    }
+    printf("]\n");
+    herr_t error = H5Dwrite(pores_ds,           // dataset_id
+			    H5T_NATIVE_FLOAT,   // mem_type_id
+			    pores_memspace_id,  // mem_space_id
+			    pores_filespace_id, // file_space_id
+			    H5P_DEFAULT,        // xfer_plist_id
+			    pore_slice_buffer   // *buf
+			    );
+    if (error < 0) {
+      fprintf(stderr, "Failed to write dataset: %d\n", error);
+      return -1;
+    }
   }
   // Free up memory and return
   free(kernelmax);
+  free(kernelmin);
   return 0;
 }
 
