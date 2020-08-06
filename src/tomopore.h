@@ -24,7 +24,15 @@ typedef struct {
 } Vector;
 
 // Function declarations
-float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow, DIM icol);
+float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow, DIM icol,
+		      void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count));
+
+char tp_apply_filter(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel,
+		     void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count));
+
+char tp_extract_pores(hid_t volume_ds, hid_t pores_ds);
+
+/* char tp_apply_filter(hid_t dataset, Matrix3D *kernel); */
 
 Matrix3D *tp_matrixmalloc(DIM n_slices, DIM n_rows, DIM n_columns);
 
