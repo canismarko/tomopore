@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <hdf5.h>
+#include "tomopore.h"
 
 // Global constants
 #define DS_SRC_NAME "volume"
@@ -8,35 +9,8 @@
 #define DS_SIZE 262144
 #define PORE_MIN_SIZE 5
 #define PORE_MAX_SIZE 31
+#define RANK 3
 
-// Type definitions
-typedef uint16_t DIM;
-typedef float VEC;
-typedef float DTYPE;
-typedef struct {
-  DIM nslices;
-  DIM nrows;
-  DIM ncolumns;
-  DTYPE arr[];
-} Matrix3D;
-typedef struct {
-  DIM z;
-  DIM y;
-  DIM x;
-} Point;
-typedef struct {
-  VEC z;
-  VEC y;
-  VEC x;
-} Vector;
-
-// Function declarations
-Matrix3D *tp_matrixmalloc(DIM n_slices, DIM n_rows, DIM n_columns);
-uint16_t tp_num_iters(float *arr, uint16_t dimension);
-void tp_normalize_kernel(Matrix3D *kernel);
-void tp_ellipsoid(Matrix3D *kernel);
-void tp_box(Matrix3D *kernel);
-uint64_t tp_indices(Matrix3D *vol, DIM islice, DIM irow, DIM icolumn);
 
 
 /* Apply a series of filters to the volume using 3D kernels This is done */
@@ -71,6 +45,7 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds) {
   int ndims = H5Sget_simple_extent_ndims(volume_dsp);
   if (ndims != 3) {
     fprintf(stderr, "Error: Input dataset has %u dimensions instead of 3.\n", ndims);
+    return -1;
   }
   hsize_t shape[3];
   H5Sget_simple_extent_dims(volume_dsp, shape, NULL);
@@ -78,32 +53,49 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds) {
   hsize_t n_rows = shape[1];
   hsize_t n_cols = shape[2];
   // Create an array to hold the data as it's loaded from disk
-  float volume_buffer[n_slcs][n_rows][n_cols];
-  float pore_slice_buffer[n_rows][n_cols];
-  /* // Load the first kernel-height slices worth of data from disk to memory */
-  /* hid_t dtype = H5Dget_type(volume); */
-  /* herr_t error = H5Dread(volume,        // dataset_id */
-  /* 			 dtype,         // mem_type_id */
-  /* 			 H5S_ALL,       // mem_space_id */
-  /* 			 H5S_ALL,       // file_space_id */
-  /* 			 H5P_DEFAULT,   // xfer_plist_id */
-  /* 			 volume_buffer  // buffer to hold the data */
-  /* 			 ); */
-  /* if (error < 0) { */
-  /*   fprintf(stderr, "Failed to read dataset: %d\n", error); */
-  /* }   */
-  /* // Loop through the slices and apply the 3D filter */
-  /* for (uint16_t islc=0; islc < n_slcs; islc++) { */
-  /*   // Update the in-memory buffer with a new slice if necessary */
-    
-  /*   // Step through each pixel in the row and apply the kernel */
-  /*   for (DIM irow=0; irow < n_rows; irow++) { */
-  /*     for (DIM icol=0; icol < n_cols; icol++) { */
-  /* 	pore_slice_buffer[irow][icol] = tp_apply_kernel(volume_buffer, kernelmin, islc, irow, icol); */
-  /*     } */
-  /*   } */
-  /*   // Write the slice to the HDF5 dataset */
-  /* } */
+  /* DTYPE volume_buffer[n_slcs][n_rows][n_cols]; */
+  Matrix3D *volume_buffer = tp_matrixmalloc(n_slcs, n_rows, n_cols);
+  DTYPE pore_slice_buffer[n_rows][n_cols];
+  // Load the first kernel-height slices worth of data from disk to memory
+  hid_t filespace_id = H5Dget_space(volume_ds);
+  hsize_t starts[3] = {0, 0, 0};
+  hsize_t strides[3] = {1, 1, 1};
+  hsize_t counts[3] = {1, 1, 1};
+  hsize_t blocks[3] = {n_slcs, n_rows, n_cols};
+  hid_t memspace_id = H5Screate_simple(RANK, blocks, NULL);
+  H5Sselect_hyperslab(filespace_id,   // space_id,
+		      H5S_SELECT_SET, // op,
+		      starts,         // start
+		      strides,        // stride
+		      counts,         // count
+		      blocks          // block
+		      );
+  herr_t error = H5Dread(volume_ds,        // dataset_id
+			 H5T_NATIVE_FLOAT, // mem_type_id
+			 memspace_id,      // mem_space_id
+			 filespace_id,     // file_space_id
+			 H5P_DEFAULT,      // xfer_plist_id
+			 volume_buffer     // buffer to hold the data
+			 );
+  if (error < 0) {
+    fprintf(stderr, "Failed to read dataset: %d\n", error);
+    return -1;
+  }
+  // Loop through the slices and apply the 3D filter
+  DIM center_slc = ((n_slcs - 1) / 2);
+  for (uint16_t islc=0; islc < n_slcs; islc++) {
+    // Update the in-memory buffer with a new slice if necessary
+    char update_needed = 0;
+    if (islc > center_slc) {
+    }
+    // Step through each pixel in the row and apply the kernel */
+    for (DIM irow=0; irow < n_rows; irow++) {
+      for (DIM icol=0; icol < n_cols; icol++) {
+	pore_slice_buffer[irow][icol] = tp_apply_kernel(volume_buffer, kernelmin, islc, irow, icol);
+      }
+    }
+    // Write the slice to the HDF5 dataset
+  }
   // Free up memory and return
   free(kernelmax);
   return 0;
@@ -118,7 +110,7 @@ int main(int argc, char *argv[]) {
 		       );
   // Open the source datasets
   hid_t src_ds, dst_ds;
-  src_ds = H5Dopen2(h5fp, DS_SRC_NAME, H5P_DEFAULT);
+  src_ds = H5Dopen(h5fp, DS_SRC_NAME, H5P_DEFAULT);
   if (src_ds < 0) {
     if (!H5Lexists(h5fp, DS_SRC_NAME, H5P_DEFAULT)) {
       fprintf(stderr, "Source dataset '%s' not found.\n", DS_SRC_NAME);
@@ -128,11 +120,12 @@ int main(int argc, char *argv[]) {
     return -1;
   }
   // Open (or create) the destination dataset
+  hid_t src_space = 0;
   if (H5Lexists(h5fp, DS_DST_NAME, H5P_DEFAULT)) {
-    dst_ds = H5Dopen2(h5fp, DS_DST_NAME, H5P_DEFAULT);
+    dst_ds = H5Dopen(h5fp, DS_DST_NAME, H5P_DEFAULT);
   } else {
     // Create the destination dataset if it didn't exist
-    hid_t src_space = H5Dget_space(src_ds);
+    src_space = H5Dget_space(src_ds);
     dst_ds = H5Dcreate(h5fp,             // loc_id
 		       DS_DST_NAME,      // name
 		       H5T_NATIVE_FLOAT, // Datatype identifier
@@ -144,6 +137,14 @@ int main(int argc, char *argv[]) {
   }
   // Apply the morpohology filters to extract the pore structure
   char result = tp_extract_pores(src_ds, dst_ds);
+  // Close all the datasets, dataspaces, etc
+  if (src_space > 0) {
+    H5Sclose(src_space);
+  }
+  H5Dclose(src_ds);
+  H5Dclose(dst_ds);
+  H5Fclose(h5fp);
+  // Check if the pore structure extraction finished successfully
   if (result < 0) {
     fprintf(stderr, "Failed to extract pores %s: %d\n", DS_SRC_NAME, result);
     return -1;
@@ -156,11 +157,11 @@ int main(int argc, char *argv[]) {
 // Normalize the kernel so that the sum of all pixels equal 1
 void tp_normalize_kernel(Matrix3D *kernel) {
   // Find out what unnormalized sum total is
-  double total;
+  double total = 0;
   for (uint16_t k=0; k < kernel->nslices; k++) {
     for (uint16_t j=0; j < kernel->nrows; j++) {
       for (uint16_t i=0; i < kernel->ncolumns; i++) {
-	/* total += kernel[k][j][i]; */
+	total += kernel->arr[tp_indices(kernel, k, j, i)];
       }
     }
   }
@@ -168,7 +169,16 @@ void tp_normalize_kernel(Matrix3D *kernel) {
   for (uint16_t k=0; k < kernel->nslices; k++) {
     for (uint16_t j=0; j < kernel->nrows; j++) {
       for (uint16_t i=0; i < kernel->ncolumns; i++) {
-	/* kernel[k][j][i] = kernel[k][j][i] / total; */
+	uint64_t idx = tp_indices(kernel, k, j, i);
+	kernel->arr[idx] = kernel->arr[idx] / total;
+      }
+    }
+  }
+  total = 0;
+  for (uint16_t k=0; k < kernel->nslices; k++) {
+    for (uint16_t j=0; j < kernel->nrows; j++) {
+      for (uint16_t i=0; i < kernel->ncolumns; i++) {
+	total += kernel->arr[tp_indices(kernel, k, j, i)];
       }
     }
   }
@@ -218,6 +228,7 @@ void tp_ellipsoid(Matrix3D *kernel) {
 }
 
 
+// Take a volume and return a flattened index for a given slice, row and column
 uint64_t tp_indices(Matrix3D *vol, DIM islice, DIM irow, DIM icolumn) {
   return islice * vol->nrows * vol->ncolumns + irow * vol->ncolumns + icolumn;
 }
@@ -239,6 +250,6 @@ void tp_box(Matrix3D *kernel) {
 
 
 // Take a buffer of data, and apply the kernel to each row/column pixel for the given slice index
-float tp_apply_kernel(float *arr, float *kernel, uint16_t islc, uint16_t irow, uint16_t icol) {
+float tp_apply_kernel(Matrix3D *arr, Matrix3D *kernel, uint16_t islc, uint16_t irow, uint16_t icol) {
   
 }
