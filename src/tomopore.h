@@ -4,6 +4,7 @@
 
 // Type definitions
 typedef uint16_t DIM;
+typedef uint64_t DDIM;
 typedef float VEC;
 typedef float DTYPE;
 typedef struct {
@@ -12,6 +13,11 @@ typedef struct {
   DIM ncolumns;
   DTYPE arr[];
 } Matrix3D;
+typedef struct {
+  DIM nrows;
+  DIM ncolumns;
+  DTYPE arr[];
+} Matrix2D;
 typedef struct {
   DIM z;
   DIM y;
@@ -25,16 +31,18 @@ typedef struct {
 
 // Function declarations
 float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow, DIM icol,
-		      void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count));
+		      void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, DDIM *running_count));
 
 char tp_apply_filter(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel,
-		     void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count));
+		     void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, DDIM *running_count));
 
 char tp_extract_pores(hid_t volume_ds, hid_t pores_ds);
 
 /* char tp_apply_filter(hid_t dataset, Matrix3D *kernel); */
 
 Matrix3D *tp_matrixmalloc(DIM n_slices, DIM n_rows, DIM n_columns);
+
+Matrix2D *tp_matrixmalloc2d(DIM n_rows, DIM n_columns);
 
 uint16_t tp_num_iters(float *arr, uint16_t dimension);
 
@@ -44,7 +52,8 @@ void tp_ellipsoid(Matrix3D *kernel);
 
 void tp_box(Matrix3D *kernel);
 
-uint64_t tp_indices(Matrix3D *vol, DIM islice, DIM irow, DIM icolumn);
+DDIM tp_indices(Matrix3D *vol, DIM islice, DIM irow, DIM icolumn);
+DDIM tp_indices2d(Matrix2D *vol, DIM irow, DIM icolumn);
 
 void roll_buffer(Matrix3D *buffer);
 
@@ -58,4 +67,4 @@ void roll_buffer(Matrix3D *buffer);
 /* is intended to hold the number of inputs that have been processed and */
 /* can be useful when calculating means, etc. */
 
-void tp_apply_max(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count);
+void tp_apply_max(DTYPE volume_val, DTYPE kernel_val, double *running_total, DDIM *running_count);

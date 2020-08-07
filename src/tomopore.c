@@ -4,9 +4,12 @@
 #include "tomopore.h"
 
 // Global constants
-#define DS_SRC_NAME "volume"
-#define DS_DST_NAME "pores"
-#define DS_SIZE 262144
+// #define DATA_FILE "data/phantom3d.h5"
+// #define DATA_FILE "/run/media/mwolf/WOLFMAN_KAK/tomo-2020-02-11-aps7bmb/035_Wolfman_Minicell__035_rec.h5"
+#define DATA_FILE "/run/media/mwolf/WOLFMAN_KAK/tomo-2020-02-11-aps7bmb/092_Wolfman_Minicell_inSitu_No8_C4_wExp_092_rec.h5"
+// #define DATA_FILE "/run/media/mwolf/WOLFMAN_KAK/tomo-2020-02-11-aps7bmb/phantom3d.h5"
+#define DS_SRC_NAME "full_volume"
+#define DS_DST_NAME "new_pores"
 #define PORE_MIN_SIZE 5
 #define PORE_MAX_SIZE 31
 #define RANK 3
@@ -19,6 +22,33 @@
 /* in HDF5 datasets. */
 
 
+void print_progress(DIM current, DIM total, char desc[])
+{
+  float ratio = ((float) current / (float) total);
+  // Prepare a progress bar
+  char bar_length = 30;
+  char bar[bar_length+1];
+  bar[bar_length] = '\0';
+  float bar_ratio;
+  for (char i=0; i<bar_length; i++) {
+    bar_ratio = ((float) i / (float) bar_length);
+    if (bar_ratio < ratio) {
+      bar[i] = '#';
+    } else {
+      bar[i] = ' ';
+    }
+  }
+  // Do the printing
+  printf("\r%s: |%s| %d/%d (%.1f%%)", desc, bar, current, total, ratio * 100.);
+  if (current == total) {
+    // We're finished, so print a newline
+    printf("\n");
+  } else {
+    fflush(stdout);
+  }
+}
+
+
 Matrix3D *tp_matrixmalloc(DIM n_slices, DIM n_rows, DIM n_columns) {
   // Allocated memory for the 3D matrix
   Matrix3D *new_matrix = malloc(sizeof(Matrix3D) + n_slices * n_rows * n_columns * sizeof(DTYPE));
@@ -27,6 +57,19 @@ Matrix3D *tp_matrixmalloc(DIM n_slices, DIM n_rows, DIM n_columns) {
   } 
   // Store the size of the array
   new_matrix->nslices = n_slices;
+  new_matrix->nrows = n_rows;
+  new_matrix->ncolumns = n_columns;
+  return new_matrix;
+}
+
+
+Matrix2D *tp_matrixmalloc2d(DIM n_rows, DIM n_columns) {
+  // Allocated memory for the 2D matrix
+  Matrix2D *new_matrix = malloc(sizeof(Matrix2D) + n_rows * n_columns * sizeof(DTYPE));
+  if (new_matrix == NULL) {
+    fprintf(stderr, "Unable to allocate memory for (%u, %u) array.", n_rows, n_columns);
+  } 
+  // Store the size of the array
   new_matrix->nrows = n_rows;
   new_matrix->ncolumns = n_columns;
   return new_matrix;
@@ -59,35 +102,34 @@ char tp_apply_filter
 // on error.
 {
   // Retrieve metadata about the dataset
-  hid_t src_dsp = H5Dget_space(src_ds);
-  int ndims = H5Sget_simple_extent_ndims(src_dsp);
-  if (ndims != 3) {
+  hid_t src_filespace_id = H5Dget_space(src_ds);
+  int ndims = H5Sget_simple_extent_ndims(src_filespace_id);
+  if (ndims != RANK) {
     fprintf(stderr, "Error: Input dataset has %u dimensions instead of 3.\n", ndims);
     return -1;
   }
   hsize_t shape[3];
-  H5Sget_simple_extent_dims(src_dsp, shape, NULL);
+  H5Sget_simple_extent_dims(src_filespace_id, shape, NULL);
   DIM n_slcs = PORE_MIN_SIZE;
   hsize_t n_rows = shape[1];
   hsize_t n_cols = shape[2];
   // Create an array to hold the data as it's loaded from disk
   Matrix3D *working_buffer = tp_matrixmalloc(n_slcs, n_rows, n_cols);
-  DTYPE pore_slice_buffer[n_rows][n_cols];
+  // DTYPE pore_slice_buffer[n_rows][n_cols];
+  Matrix2D *pore_slice_buffer = tp_matrixmalloc2d(n_rows, n_cols);
+  hid_t dest_filespace_id = H5Dget_space(dest_ds);
   // Prepare HDF5 dataspaces for reading and writing
   hsize_t strides[3] = {1, 1, 1};
   hsize_t counts[3] = {1, 1, 1};
-  hid_t src_filespace_id = H5Dget_space(src_ds);
-  hid_t pores_filespace_id = H5Dget_space(dest_ds);
   hsize_t write_blocks[3] = {1, n_rows, n_cols};
   hsize_t write_blocks_mem[2] = {n_rows, n_cols};
-  hid_t src_memspace_id;
-  hid_t pores_memspace_id = H5Screate_simple(RANK-1, write_blocks_mem, NULL);
+  hid_t dest_memspace_id = H5Screate_simple(RANK-1, write_blocks_mem, NULL);
   // Load the first kernel-height slices worth of data from disk to memory
   hsize_t read_starts[3] = {0, 0, 0}; // Gets update as new rows are read
   hsize_t write_starts[3] = {0, 0, 0}; // Gets update as new rows are written
   hsize_t read_blocks[3] = {n_slcs, n_rows, n_cols}; // Gets changed to {1, ...} after first read
   hsize_t read_extent[3] = {n_slcs, n_rows, n_cols};
-  src_memspace_id = H5Screate_simple(RANK, read_blocks, NULL);
+  hid_t src_memspace_id = H5Screate_simple(RANK, read_blocks, NULL);
   H5Sselect_hyperslab(src_filespace_id,   // space_id,
 		      H5S_SELECT_SET, // op,
 		      read_starts,         // start
@@ -135,7 +177,6 @@ char tp_apply_filter
       // Drop off the old slice and put the next one on top
       new_diskslc = islc + dL;
       new_islc = dL;
-      printf("islc: %02d, diskslc: %02d, buffslc: %02lld, new_islc: %02d\n", islc, new_diskslc, read_mem_starts[0], new_islc);
       // Move each slice down
       roll_buffer(working_buffer);
       // Get a new last slice
@@ -160,25 +201,24 @@ char tp_apply_filter
       }
     } else if (in_head) {
       new_islc = islc;
-      printf("islc: --, diskslc: --, buffslc: --, new_islc: %02d\n", new_islc);
     } else if (in_tail) {
       new_islc = islc - shape[0] + kernel->nrows;
-      printf("islc: --, diskslc: --, buffslc: --, new_islc: %02d\n", new_islc);
     }
     // Step through each pixel in the row and apply the kernel */
     for (DIM irow=0; irow < n_rows; irow++) {
       for (DIM icol=0; icol < n_cols; icol++) {
-	pore_slice_buffer[irow][icol] = tp_apply_kernel(working_buffer,
-							kernel,
-							new_islc,
-							irow,
-							icol,
-							filter_func);
+	DDIM this_idx = tp_indices2d(pore_slice_buffer, irow, icol);
+	pore_slice_buffer->arr[this_idx] = tp_apply_kernel(working_buffer,
+							   kernel,
+							   new_islc,
+							   irow,
+							   icol,
+							   filter_func);
       }
     }
     // Write the slice to the HDF5 dataset
     write_starts[0] = islc;
-    H5Sselect_hyperslab(pores_filespace_id, // space_id,
+    H5Sselect_hyperslab(dest_filespace_id, // space_id,
 			H5S_SELECT_SET,     // op,
 			write_starts,       // start
 			strides,            // stride
@@ -187,8 +227,8 @@ char tp_apply_filter
 			);
     herr_t error = H5Dwrite(dest_ds,           // dataset_id
 			    H5T_NATIVE_FLOAT,   // mem_type_id
-			    pores_memspace_id,  // mem_space_id
-			    pores_filespace_id, // file_space_id
+			    dest_memspace_id,  // mem_space_id
+			    dest_filespace_id, // file_space_id
 			    H5P_DEFAULT,        // xfer_plist_id
 			    pore_slice_buffer   // *buf
 			    );
@@ -196,6 +236,7 @@ char tp_apply_filter
       fprintf(stderr, "Failed to write dataset: %d\n", error);
       return -1;
     }
+    print_progress(islc, shape[0]-1, "Filtering slices");
   }
   
   return 0;
@@ -223,7 +264,7 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds) {
 
 int main(int argc, char *argv[]) {
   // Open the HDF5 file
-  hid_t h5fp = H5Fopen("data/phantom3d.h5", // File name to be opened
+  hid_t h5fp = H5Fopen(DATA_FILE, // File name to be opened
 		       H5F_ACC_RDWR,        // file access mode
 		       H5P_DEFAULT          // file access properties list
 		       );
@@ -244,6 +285,7 @@ int main(int argc, char *argv[]) {
     dst_ds = H5Dopen(h5fp, DS_DST_NAME, H5P_DEFAULT);
   } else {
     // Create the destination dataset if it didn't exist
+    printf("Creating new dataset: %s\n", DS_DST_NAME);
     src_space = H5Dget_space(src_ds);
     dst_ds = H5Dcreate(h5fp,             // loc_id
 		       DS_DST_NAME,      // name
@@ -253,13 +295,17 @@ int main(int argc, char *argv[]) {
 		       H5P_DEFAULT,      // Creation property list
 		       H5P_DEFAULT       // access property list
 		       );
+    if (dst_ds < 0) {
+      fprintf(stderr, "Error: Failed to create new data '%s': %ld\n", DS_DST_NAME, dst_ds);
+      return -1;
+    }
+    if (src_space > 0) {
+      H5Sclose(src_space);
+    }
   }
   // Apply the morpohology filters to extract the pore structure
   char result = tp_extract_pores(src_ds, dst_ds);
   // Close all the datasets, dataspaces, etc
-  if (src_space > 0) {
-    H5Sclose(src_space);
-  }
   H5Dclose(src_ds);
   H5Dclose(dst_ds);
   H5Fclose(h5fp);
@@ -288,7 +334,7 @@ void tp_normalize_kernel(Matrix3D *kernel) {
   for (uint16_t k=0; k < kernel->nslices; k++) {
     for (uint16_t j=0; j < kernel->nrows; j++) {
       for (uint16_t i=0; i < kernel->ncolumns; i++) {
-	uint64_t idx = tp_indices(kernel, k, j, i);
+	DDIM idx = tp_indices(kernel, k, j, i);
 	kernel->arr[idx] = kernel->arr[idx] / total;
       }
     }
@@ -348,8 +394,13 @@ void tp_ellipsoid(Matrix3D *kernel) {
 
 
 // Take a volume and return a flattened index for a given slice, row and column
-uint64_t tp_indices(Matrix3D *vol, DIM islice, DIM irow, DIM icolumn) {
+DDIM tp_indices(Matrix3D *vol, DIM islice, DIM irow, DIM icolumn) {
   return islice * vol->nrows * vol->ncolumns + irow * vol->ncolumns + icolumn;
+}
+
+// Take a slice and return a flattened index for a given row and column
+DDIM tp_indices2d(Matrix2D *vol, DIM irow, DIM icolumn) {
+  return irow * vol->ncolumns + icolumn;
 }
 
 
