@@ -38,8 +38,6 @@ char tp_apply_filter(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel,
 
 char tp_extract_pores(hid_t volume_ds, hid_t pores_ds);
 
-/* char tp_apply_filter(hid_t dataset, Matrix3D *kernel); */
-
 Matrix3D *tp_matrixmalloc(DIM n_slices, DIM n_rows, DIM n_columns);
 
 Matrix2D *tp_matrixmalloc2d(DIM n_rows, DIM n_columns);

@@ -1,19 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <hdf5.h>
 #include "tomopore.h"
 
 // Global constants
-// #define DATA_FILE "data/phantom3d.h5"
-// #define DATA_FILE "/run/media/mwolf/WOLFMAN_KAK/tomo-2020-02-11-aps7bmb/035_Wolfman_Minicell__035_rec.h5"
-#define DATA_FILE "/run/media/mwolf/WOLFMAN_KAK/tomo-2020-02-11-aps7bmb/092_Wolfman_Minicell_inSitu_No8_C4_wExp_092_rec.h5"
-// #define DATA_FILE "/run/media/mwolf/WOLFMAN_KAK/tomo-2020-02-11-aps7bmb/phantom3d.h5"
-#define DS_SRC_NAME "full_volume"
-#define DS_DST_NAME "new_pores"
 #define PORE_MIN_SIZE 5
 #define PORE_MAX_SIZE 31
 #define RANK 3
-
 
 
 /* Apply a series of filters to the volume using 3D kernels This is done */
@@ -245,6 +239,7 @@ char tp_apply_filter
 
 // Take a 3D volume of tomography data and isolate the pore structure using morphology filters
 char tp_extract_pores(hid_t volume_ds, hid_t pores_ds) {
+  printf("Starting pore extraction");
   // Create a kernel for the black tophat filters
   Matrix3D *kernelmax = tp_matrixmalloc(PORE_MAX_SIZE, PORE_MAX_SIZE, PORE_MAX_SIZE);
   tp_ellipsoid(kernelmax);
@@ -263,32 +258,81 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds) {
 
 
 int main(int argc, char *argv[]) {
+  // Parse command line arguments
+  unsigned int valid_args = 0;
+  // Default values
+  char *ds_source_name = malloc(sizeof(char) * 7);
+  strcpy(ds_source_name, "volume");
+  char *ds_dest_name = malloc(sizeof(char) * 6);
+  strcpy(ds_dest_name, "pores");
+  char *datafile;
+  // Parse the arguments
+  for (int argidx=1; argidx < argc; argidx++) {
+    if (strcmp(argv[argidx], "--source") == 0) {
+      if (argidx + 1 < argc) {
+	ds_source_name = (char *)realloc(ds_source_name, strlen(argv[argidx])*sizeof(char));
+	strcpy(ds_source_name, argv[argidx+1]);
+	argidx++; // Increment the counter to skip the argument's value
+      } else {
+	valid_args = 0;
+	break;
+      }
+    } else if (strcmp(argv[argidx], "--dest") == 0) {
+      if (argidx + 1 < argc) {
+	ds_dest_name = (char *)realloc(ds_dest_name, strlen(argv[argidx])*sizeof(char));
+	strcpy(ds_dest_name, argv[argidx+1]);
+	argidx++; // Increment the counter to skip the argument's value
+      } else {
+	valid_args = 0;
+	break;
+      }
+    } else if (strcmp(argv[argidx], "--help") == 0) {
+      valid_args = 0;
+    } else if (argv[argidx][0] == '-') {
+      fprintf(stderr, "Error: Unknown argument '%s'\n\n", argv[argidx]);
+      valid_args = 0;
+      break;
+    } else {
+      // Required argument with the filename
+      datafile = (char *)malloc(strlen(argv[1])*sizeof(char));
+      strcpy(datafile, argv[1]);
+      valid_args = 1;
+    }
+  }
+  if (!valid_args) {
+    fprintf(stderr, "Usage: %s filename [--source <source_dataset>] [--dest <destination dataset>]\n",
+	    argv[0]);
+    return -1;
+  }
   // Open the HDF5 file
-  hid_t h5fp = H5Fopen(DATA_FILE, // File name to be opened
+  hid_t h5fp = H5Fopen(datafile, // File name to be opened
 		       H5F_ACC_RDWR,        // file access mode
 		       H5P_DEFAULT          // file access properties list
 		       );
+  if (h5fp < 0) {
+    fprintf(stderr, "Error: Could not open file %s\n", datafile);
+  }
   // Open the source datasets
   hid_t src_ds, dst_ds;
-  src_ds = H5Dopen(h5fp, DS_SRC_NAME, H5P_DEFAULT);
+  src_ds = H5Dopen(h5fp, ds_source_name, H5P_DEFAULT);
   if (src_ds < 0) {
-    if (!H5Lexists(h5fp, DS_SRC_NAME, H5P_DEFAULT)) {
-      fprintf(stderr, "Source dataset '%s' not found.\n", DS_SRC_NAME);
+    if (!H5Lexists(h5fp, ds_source_name, H5P_DEFAULT)) {
+      fprintf(stderr, "Source dataset '%s' not found.\n", ds_source_name);
     } else {
-      fprintf(stderr, "Error opening source dataset '%s': %ld\n", DS_SRC_NAME, src_ds);
+      fprintf(stderr, "Error opening source dataset '%s': %ld\n", ds_source_name, src_ds);
     }
     return -1;
   }
   // Open (or create) the destination dataset
   hid_t src_space = 0;
-  if (H5Lexists(h5fp, DS_DST_NAME, H5P_DEFAULT)) {
-    dst_ds = H5Dopen(h5fp, DS_DST_NAME, H5P_DEFAULT);
+  if (H5Lexists(h5fp, ds_dest_name, H5P_DEFAULT)) {
+    dst_ds = H5Dopen(h5fp, ds_dest_name, H5P_DEFAULT);
   } else {
     // Create the destination dataset if it didn't exist
-    printf("Creating new dataset: %s\n", DS_DST_NAME);
+    printf("Creating new dataset: %s\n", ds_dest_name);
     src_space = H5Dget_space(src_ds);
     dst_ds = H5Dcreate(h5fp,             // loc_id
-		       DS_DST_NAME,      // name
+		       ds_dest_name,      // name
 		       H5T_NATIVE_FLOAT, // Datatype identifier
 		       src_space,        // Dataspace identifier
 		       H5P_DEFAULT,      // Link property list
@@ -296,7 +340,7 @@ int main(int argc, char *argv[]) {
 		       H5P_DEFAULT       // access property list
 		       );
     if (dst_ds < 0) {
-      fprintf(stderr, "Error: Failed to create new data '%s': %ld\n", DS_DST_NAME, dst_ds);
+      fprintf(stderr, "Error: Failed to create new data '%s': %ld\n", ds_dest_name, dst_ds);
       return -1;
     }
     if (src_space > 0) {
@@ -304,14 +348,15 @@ int main(int argc, char *argv[]) {
     }
   }
   // Apply the morpohology filters to extract the pore structure
-  char result = tp_extract_pores(src_ds, dst_ds);
+  char result = 0;
+  result = tp_extract_pores(src_ds, dst_ds);
   // Close all the datasets, dataspaces, etc
   H5Dclose(src_ds);
   H5Dclose(dst_ds);
   H5Fclose(h5fp);
   // Check if the pore structure extraction finished successfully
   if (result < 0) {
-    fprintf(stderr, "Failed to extract pores %s: %d\n", DS_SRC_NAME, result);
+    fprintf(stderr, "Failed to extract pores %s: %d\n", ds_source_name, result);
     return -1;
   }
   // TODO: Close the source and destination datasets
