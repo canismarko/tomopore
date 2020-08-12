@@ -8,12 +8,41 @@
 #define PORE_MIN_SIZE 5
 #define PORE_MAX_SIZE 31
 #define RANK 3
-
+#define TRUE 1
+#define FALSE 0
 
 /* Apply a series of filters to the volume using 3D kernels This is done */
 /* with a 3D kernel so that we don't lose data, but that means lots more */
 /* memory. To avoid running out of memory, intermediate arrays are saved */
 /* in HDF5 datasets. */
+
+hid_t require_dataset
+(char *dataset_name, hid_t h5fp, hid_t dataspace)
+{
+  hid_t new_dataset_id;
+  if (H5Lexists(h5fp, ds_dest_name, H5P_DEFAULT)) {
+    dst_ds = H5Dopen(h5fp, ds_dest_name, H5P_DEFAULT);
+  } else {
+    // Create the destination dataset if it didn't exist
+    printf("Creating new dataset: %s\n", ds_dest_name);
+    src_space = H5Dget_space(src_ds);
+    dst_ds = H5Dcreate(h5fp,             // loc_id
+		       ds_dest_name,      // name
+		       H5T_NATIVE_FLOAT, // Datatype identifier
+		       src_space,        // Dataspace identifier
+		       H5P_DEFAULT,      // Link property list
+		       H5P_DEFAULT,      // Creation property list
+		       H5P_DEFAULT       // access property list
+		       );
+    if (dst_ds < 0) {
+      fprintf(stderr, "Error: Failed to create new data '%s': %ld\n", ds_dest_name, dst_ds);
+      return -1;
+    }
+    if (src_space > 0) {
+      H5Sclose(src_space);
+    }
+  }
+}
 
 
 void print_progress(DIM current, DIM total, char desc[])
@@ -87,7 +116,7 @@ void roll_buffer(Matrix3D *buffer)
 
 char tp_apply_filter
 (hid_t src_ds, hid_t dest_ds, Matrix3D *kernel,
- void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count)
+ void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count, char *is_first_round)
  )
 // Apply a given element-wise filter function to using the provided
 // kernel to *src_ds* HDF5 dataset and save it to *dest_ds* HDF5
@@ -246,10 +275,21 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds) {
   Matrix3D *kernelmin = tp_matrixmalloc(PORE_MIN_SIZE, PORE_MIN_SIZE, PORE_MIN_SIZE);
   tp_box(kernelmin);
 
-  char result = tp_apply_filter(volume_ds, pores_ds, kernelmin, tp_apply_max);
+  // Prepare a temporary dataset to hold the intermediate datasets
+  
+
+  // Apply opening filter
+  char result;
+  result = tp_apply_filter(volume_ds, pores_ds, kernelmin, tp_apply_max);
   if (result < 0) {
     fprintf(stderr, "Error: Could not apply max filter.\n");
   }
+  result = tp_apply_filter(pores_ds, pores_ds, kernelmin, tp_apply_min);
+  if (result < 0) {
+    fprintf(stderr, "Error: Could not apply min filter.\n");
+  }
+
+  
   // Free up memory and return
   free(kernelmax);
   free(kernelmin);
@@ -257,21 +297,19 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds) {
 }
 
 
-int main(int argc, char *argv[]) {
-  // Parse command line arguments
-  unsigned int valid_args = 0;
-  // Default values
-  char *ds_source_name = malloc(sizeof(char) * 7);
-  strcpy(ds_source_name, "volume");
-  char *ds_dest_name = malloc(sizeof(char) * 6);
-  strcpy(ds_dest_name, "pores");
-  char *datafile;
-  // Parse the arguments
+unsigned int parse_args(int argc, char *argv[], char **ds_source_name,
+			char **ds_dest_name, char **datafile,
+			DIM *min_pore_size, DIM *max_pore_size)
+// Parse the command line arguments (*argc*, *argv*), and store the
+// results into the remaining pointers. Returns 0 if arguments are
+// valid, otherwise returns a negative number.
+{
+  unsigned int valid_args;
   for (int argidx=1; argidx < argc; argidx++) {
     if (strcmp(argv[argidx], "--source") == 0) {
       if (argidx + 1 < argc) {
-	ds_source_name = (char *)realloc(ds_source_name, strlen(argv[argidx])*sizeof(char));
-	strcpy(ds_source_name, argv[argidx+1]);
+	*ds_source_name = (char *)realloc(*ds_source_name, strlen(argv[argidx])*sizeof(char));
+	strcpy(*ds_source_name, argv[argidx+1]);
 	argidx++; // Increment the counter to skip the argument's value
       } else {
 	valid_args = 0;
@@ -279,8 +317,25 @@ int main(int argc, char *argv[]) {
       }
     } else if (strcmp(argv[argidx], "--dest") == 0) {
       if (argidx + 1 < argc) {
-	ds_dest_name = (char *)realloc(ds_dest_name, strlen(argv[argidx])*sizeof(char));
-	strcpy(ds_dest_name, argv[argidx+1]);
+	*ds_dest_name = (char *)realloc(*ds_dest_name, strlen(argv[argidx])*sizeof(char));
+	strcpy(*ds_dest_name, argv[argidx+1]);
+	argidx++; // Increment the counter to skip the argument's value
+      } else {
+	valid_args = 0;
+	break;
+      }
+    } else if (strcmp(argv[argidx], "--min-pore-size") == 0) {
+      if (argidx + 1 < argc) {
+	*min_pore_size = atoi(argv[argidx+1]);
+	argidx++; // Increment the counter to skip the argument's value
+      } else {
+	valid_args = 0;
+	break;
+      }
+    } else if (strcmp(argv[argidx], "--max-pore-size") == 0) {
+      if (argidx + 1 < argc) {
+	printf("Found\n");
+	*max_pore_size = atoi(argv[argidx+1]);
 	argidx++; // Increment the counter to skip the argument's value
       } else {
 	valid_args = 0;
@@ -294,8 +349,9 @@ int main(int argc, char *argv[]) {
       break;
     } else {
       // Required argument with the filename
-      datafile = (char *)malloc(strlen(argv[1])*sizeof(char));
-      strcpy(datafile, argv[1]);
+      *datafile = (char *)malloc(strlen(argv[1])*sizeof(char));
+      strcpy(*datafile, argv[1]);
+      printf("Inner filename: %s\n", *datafile);
       valid_args = 1;
     }
   }
@@ -303,6 +359,46 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "Usage: %s filename [--source <source_dataset>] [--dest <destination dataset>]\n",
 	    argv[0]);
     return -1;
+  }  
+}
+
+
+int main(int argc, char *argv[]) {
+  // Default values
+  char *ds_source_name = malloc(sizeof(char) * 7);
+  strcpy(ds_source_name, "volume");
+  char *ds_dest_name = malloc(sizeof(char) * 6);
+  strcpy(ds_dest_name, "pores");
+  char *datafile;
+  DIM *min_pore_size = NULL;
+  min_pore_size = malloc(sizeof(DIM));
+  *min_pore_size = 5;
+  DIM *max_pore_size = NULL;
+  max_pore_size = malloc(sizeof(DIM));
+  *max_pore_size = 31;
+  // Parse command line arguments
+  unsigned int args_error = parse_args(argc, argv,
+				       &ds_source_name, &ds_dest_name, &datafile,
+				       min_pore_size, max_pore_size);
+  printf("Filename: %s\n", datafile);
+  printf("Source dataset: %s\n", ds_source_name);
+  printf("Destination dataset: %s\n", ds_dest_name);
+  printf("Min pore size: %d\n", *min_pore_size);
+  printf("Max pore size: %d\n", *max_pore_size);
+  if (args_error < 0) {
+    return -1;
+  }
+  if (*min_pore_size >= *max_pore_size) {
+    printf("Error: Max pore size (%d) must be larger than min pore size (%d).\n",
+	   *max_pore_size, *min_pore_size);
+    return -1;
+  }
+  // Check that kernel sizes are odd
+  if (!(*min_pore_size % 2)) {
+    printf("Warning: Min pore size (%d) should be an odd number.\n", *min_pore_size);
+  }
+  if (!(*max_pore_size % 2)) {
+    printf("Warning: Max pore size (%d) should be an odd number.\n", *max_pore_size);
   }
   // Open the HDF5 file
   hid_t h5fp = H5Fopen(datafile, // File name to be opened
@@ -324,29 +420,7 @@ int main(int argc, char *argv[]) {
     return -1;
   }
   // Open (or create) the destination dataset
-  hid_t src_space = 0;
-  if (H5Lexists(h5fp, ds_dest_name, H5P_DEFAULT)) {
-    dst_ds = H5Dopen(h5fp, ds_dest_name, H5P_DEFAULT);
-  } else {
-    // Create the destination dataset if it didn't exist
-    printf("Creating new dataset: %s\n", ds_dest_name);
-    src_space = H5Dget_space(src_ds);
-    dst_ds = H5Dcreate(h5fp,             // loc_id
-		       ds_dest_name,      // name
-		       H5T_NATIVE_FLOAT, // Datatype identifier
-		       src_space,        // Dataspace identifier
-		       H5P_DEFAULT,      // Link property list
-		       H5P_DEFAULT,      // Creation property list
-		       H5P_DEFAULT       // access property list
-		       );
-    if (dst_ds < 0) {
-      fprintf(stderr, "Error: Failed to create new data '%s': %ld\n", ds_dest_name, dst_ds);
-      return -1;
-    }
-    if (src_space > 0) {
-      H5Sclose(src_space);
-    }
-  }
+  dst_ds = require_dataset(ds_dest_name, h5fp, );
   // Apply the morpohology filters to extract the pore structure
   char result = 0;
   result = tp_extract_pores(src_ds, dst_ds);
@@ -467,7 +541,7 @@ void tp_box(Matrix3D *kernel) {
 /* Take a buffer of data, and apply the kernel to each row/column pixel for the given slice index
      *islc*, *irow*, *icol* give the current position in the *subvolume* buffer */
 float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow, DIM icol,
-		      void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count))
+		      void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count, char *is_first_round))
 // i, j, k -> indices of subvolume
 // l, m, n -> indices of kernel
 // dL, dM, dN -> reach of the kernel, so for a 3x3x3 kernel, each is (3-1)/2 = 1
@@ -480,6 +554,7 @@ float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow,
   DTYPE kernel_val, volume_val;
   int is_in_bounds;
   double running_total = 0;
+  char is_first_round = TRUE;
   uint64_t running_count = 0;
   // Iterate over the kernel dimensions, then apply them to the main arr
   for (DIM l=0; l < kernel->nslices; l++) {
@@ -499,7 +574,7 @@ float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow,
 	  volume_val = subvolume->arr[tp_indices(subvolume, i, j, k)];
 	  kernel_val = kernel->arr[tp_indices(kernel, l, m, n)];
 	  // TODO: Do a thing
-	  (*filter_func)(volume_val, kernel_val, &running_total, &running_count);
+	  (*filter_func)(volume_val, kernel_val, &running_total, &running_count, &is_first_round);
 	}
       }
     }
@@ -508,14 +583,30 @@ float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow,
 }
 
 
-void tp_apply_max(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count)
+void tp_apply_max
+(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count, char *is_first_round)
 {
   if (kernel_val > 0) {
     // Save this value as the new maximum if it's bigger than the old one
-    if (volume_val > *running_total) {
+    if ((volume_val > *running_total) || *is_first_round) {
       *running_total = volume_val;
     }
     // Increment the counter, even though it doesn't really matter for calculating maxima
     *running_count++;
+    *is_first_round = FALSE;
+  }
+}
+
+void tp_apply_min
+(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count, char *is_first_round)
+{
+  if (kernel_val > 0) {
+    // Save this value as the new maximum if it's bigger than the old one
+    if ((volume_val < *running_total) || *is_first_round) {
+      *running_total = volume_val;
+    }
+    // Increment the counter, even though it doesn't really matter for calculating maxima
+    *running_count++;
+    *is_first_round = FALSE;
   }
 }

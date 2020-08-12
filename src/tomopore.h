@@ -31,10 +31,10 @@ typedef struct {
 
 // Function declarations
 float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow, DIM icol,
-		      void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, DDIM *running_count));
+		      void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, DDIM *running_count, char *is_first_round));
 
 char tp_apply_filter(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel,
-		     void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, DDIM *running_count));
+		     void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, DDIM *running_count, char *is_first_round));
 
 char tp_extract_pores(hid_t volume_ds, hid_t pores_ds);
 
@@ -63,6 +63,9 @@ void roll_buffer(Matrix3D *buffer);
 /* total. They must all have matching signatures, though do no */
 /* necessarily have to use all the values that are given. *running_count* */
 /* is intended to hold the number of inputs that have been processed and */
-/* can be useful when calculating means, etc. */
+/* can be useful when calculating means, etc. *is_first_round* can be */
+/* set by the function to keep track of whether initialization is */
+/* needed. */
 
-void tp_apply_max(DTYPE volume_val, DTYPE kernel_val, double *running_total, DDIM *running_count);
+void tp_apply_max(DTYPE volume_val, DTYPE kernel_val, double *running_total, DDIM *running_count, char *is_first_round);
+void tp_apply_min(DTYPE volume_val, DTYPE kernel_val, double *running_total, DDIM *running_count, char *is_first_round);
