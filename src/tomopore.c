@@ -831,6 +831,9 @@ float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow,
   DIM dM = (kernel->nrows - 1) / 2;
   DIM dN = (kernel->ncolumns - 1) / 2;
   DIM i, j, k;
+  DDIM subvolume_slice_idx = 0;
+  DDIM subvolume_idx = 0;
+  DDIM kernel_idx = 0;
   DTYPE kernel_val, volume_val;
   int is_in_bounds;
   double running_total = 0;
@@ -841,23 +844,33 @@ float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow,
   // l, m, n are in the kernel space
   for (DIM l=0; l < kernel->nslices; l++) {
     i = islc + (l - dL);
+    // Check if this is a valid slice in the subvolume
+    is_in_bounds = (i >= 0) && (i < subvolume->nslices);
+    if (!is_in_bounds) continue;
+    // Keep track of where we are in the subvolume
+    subvolume_slice_idx = i * subvolume->nrows * subvolume->ncolumns;
     for (DIM m=0; m < kernel->nrows; m++) {
       j = irow + (m - dM);
+      // Check if this is a valid row in the subvolume
+      is_in_bounds = (j >= 0) && (j < subvolume->nrows);
+      if (!is_in_bounds) continue;
+      // Keep track of where we are in the subvolume
+      subvolume_idx = subvolume_slice_idx + j * subvolume->ncolumns;
       for (DIM n=0; n < kernel->ncolumns; n++) {
 	// Calculate relative coordinates in the arr matrix
 	k = icol + (n - dN);
-	// Determine if the new coordinates are in bounds for the subvolume
-	is_in_bounds = ((i >= 0) && (i < subvolume->nslices) &&
-			(j >= 0) && (j < subvolume->nrows) &&
-			(k >= 0) && (k < subvolume->ncolumns));
+	// Check if this is a valid column in the subvolume
+	is_in_bounds = (k >= 0) && (k < subvolume->ncolumns);
+	if (!is_in_bounds) continue;
 	// Retrieve the values from arrays and perform the actual
 	// operation
 	if (is_in_bounds) {
-	  volume_val = subvolume->arr[tp_indices(subvolume, i, j, k)];
-	  kernel_val = kernel->arr[tp_indices(kernel, l, m, n)];
-	  // TODO: Do a thing
+	  volume_val = subvolume->arr[subvolume_idx + k];
+	  kernel_val = kernel->arr[kernel_idx];
+	  // Apply the actual kernel filter function
 	  (*filter_func)(volume_val, kernel_val, &running_total, &running_count, &is_first_round);
 	}
+	kernel_idx++;
       }
     }
   }

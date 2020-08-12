@@ -1,4 +1,4 @@
-CC=gcc -g
+CC=gcc -g -pg
 LINK=-lhdf5
 
 .phony: all, tests
