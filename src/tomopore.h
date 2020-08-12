@@ -35,8 +35,7 @@ float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow,
 
 char tp_apply_filter(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel,
 		     void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, DDIM *running_count, char *is_first_round));
-
-char tp_extract_pores(hid_t volume_ds, hid_t pores_ds);
+char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, DIM min_pore_size, DIM max_pore_size);
 
 Matrix3D *tp_matrixmalloc(DIM n_slices, DIM n_rows, DIM n_columns);
 

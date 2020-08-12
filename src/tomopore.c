@@ -6,7 +6,7 @@
 
 // Global constants
 #define PORE_MIN_SIZE 5
-#define PORE_MAX_SIZE 31
+#define PORE_MAX_SIZE 15
 #define RANK 3
 #define TRUE 1
 #define FALSE 0
@@ -16,32 +16,29 @@
 /* memory. To avoid running out of memory, intermediate arrays are saved */
 /* in HDF5 datasets. */
 
-hid_t require_dataset
+hid_t tp_require_dataset
 (char *dataset_name, hid_t h5fp, hid_t dataspace)
 {
   hid_t new_dataset_id;
-  if (H5Lexists(h5fp, ds_dest_name, H5P_DEFAULT)) {
-    dst_ds = H5Dopen(h5fp, ds_dest_name, H5P_DEFAULT);
+  if (H5Lexists(h5fp, dataset_name, H5P_DEFAULT)) {
+    new_dataset_id = H5Dopen(h5fp, dataset_name, H5P_DEFAULT);
   } else {
     // Create the destination dataset if it didn't exist
-    printf("Creating new dataset: %s\n", ds_dest_name);
-    src_space = H5Dget_space(src_ds);
-    dst_ds = H5Dcreate(h5fp,             // loc_id
-		       ds_dest_name,      // name
+    printf("Creating new dataset: %s\n", dataset_name);
+    new_dataset_id = H5Dcreate(h5fp,             // loc_id
+		       dataset_name,      // name
 		       H5T_NATIVE_FLOAT, // Datatype identifier
-		       src_space,        // Dataspace identifier
+		       dataspace,        // Dataspace identifier
 		       H5P_DEFAULT,      // Link property list
 		       H5P_DEFAULT,      // Creation property list
 		       H5P_DEFAULT       // access property list
 		       );
-    if (dst_ds < 0) {
-      fprintf(stderr, "Error: Failed to create new data '%s': %ld\n", ds_dest_name, dst_ds);
+    if (new_dataset_id < 0) {
+      fprintf(stderr, "Error: Failed to create new data '%s': %ld\n", dataset_name, new_dataset_id);
       return -1;
     }
-    if (src_space > 0) {
-      H5Sclose(src_space);
-    }
   }
+  return new_dataset_id;
 }
 
 
@@ -120,7 +117,7 @@ char tp_apply_filter
  )
 // Apply a given element-wise filter function to using the provided
 // kernel to *src_ds* HDF5 dataset and save it to *dest_ds* HDF5
-// dataset. *src_ds* and *dest_ds* can be the save dataset, in which
+// dataset. *src_ds* and *dest_ds* can be the same dataset, in which
 // case the operation is done in place. Return 0 on success, else -1
 // on error.
 {
@@ -133,7 +130,7 @@ char tp_apply_filter
   }
   hsize_t shape[3];
   H5Sget_simple_extent_dims(src_filespace_id, shape, NULL);
-  DIM n_slcs = PORE_MIN_SIZE;
+  DIM n_slcs = kernel->nslices;
   hsize_t n_rows = shape[1];
   hsize_t n_cols = shape[2];
   // Create an array to hold the data as it's loaded from disk
@@ -177,7 +174,7 @@ char tp_apply_filter
   src_memspace_id = H5Screate_simple(RANK, read_extent, NULL);
   H5Sselect_hyperslab(src_memspace_id, // space_id,
 		      H5S_SELECT_SET,  // op,
-		      read_mem_starts,     // start
+		      read_mem_starts, // start
 		      strides,         // stride
 		      counts,          // count
 		      read_blocks      // block
@@ -228,9 +225,10 @@ char tp_apply_filter
       new_islc = islc - shape[0] + kernel->nrows;
     }
     // Step through each pixel in the row and apply the kernel */
+    DDIM this_idx;
     for (DIM irow=0; irow < n_rows; irow++) {
       for (DIM icol=0; icol < n_cols; icol++) {
-	DDIM this_idx = tp_indices2d(pore_slice_buffer, irow, icol);
+	this_idx = tp_indices2d(pore_slice_buffer, irow, icol);
 	pore_slice_buffer->arr[this_idx] = tp_apply_kernel(working_buffer,
 							   kernel,
 							   new_islc,
@@ -242,18 +240,18 @@ char tp_apply_filter
     // Write the slice to the HDF5 dataset
     write_starts[0] = islc;
     H5Sselect_hyperslab(dest_filespace_id, // space_id,
-			H5S_SELECT_SET,     // op,
-			write_starts,       // start
-			strides,            // stride
-			counts,             // count
-			write_blocks        // block
+			H5S_SELECT_SET,    // op,
+			write_starts,      // start
+			strides,           // stride
+			write_blocks,      // count
+			counts             // block
 			);
-    herr_t error = H5Dwrite(dest_ds,           // dataset_id
-			    H5T_NATIVE_FLOAT,   // mem_type_id
-			    dest_memspace_id,  // mem_space_id
-			    dest_filespace_id, // file_space_id
-			    H5P_DEFAULT,        // xfer_plist_id
-			    pore_slice_buffer   // *buf
+    herr_t error = H5Dwrite(dest_ds,               // dataset_id
+			    H5T_NATIVE_FLOAT,      // mem_type_id
+			    dest_memspace_id,      // mem_space_id
+			    dest_filespace_id,     // file_space_id
+			    H5P_DEFAULT,           // xfer_plist_id
+			    pore_slice_buffer->arr // *buf
 			    );
     if (error < 0) {
       fprintf(stderr, "Failed to write dataset: %d\n", error);
@@ -266,9 +264,292 @@ char tp_apply_filter
 }
 
 
+char tp_subtract_datasets(hid_t src_ds1, hid_t src_ds2, hid_t dest_ds)
+// Perform element-wise subtraction on one dataset from another, and
+// save the result.
+// 
+// For each element *i*, dest_ds[i] = src_ds1[i] - src_ds2
+// 
+// *dest_ds* may be the same as either *src_ds1* or *src_ds2*, in
+// which case the opeartion is done in place.
+{
+  // Retrieve metadata about the dataset
+  hid_t src_filespace1 = H5Dget_space(src_ds1);
+  hid_t src_filespace2 = H5Dget_space(src_ds2);
+  hid_t dest_filespace = H5Dget_space(dest_ds);
+  int ndims = H5Sget_simple_extent_ndims(src_filespace1);
+  // Check if the sources and destination are equally sized
+  if (!H5Sextent_equal(src_filespace1, src_filespace2)) {
+    printf("Could not subtract datasets, source extents are not equal.\n");
+    return -1;
+  }
+  if (!H5Sextent_equal(src_filespace1, dest_filespace)) {
+    printf("Could not subtract datasets, source and destination extents are not equal.\n");
+    return -1;
+  }
+  if (ndims != RANK) {
+    fprintf(stderr, "Error: Input dataset has %u dimensions instead of 3.\n", ndims);
+    return -1;
+  }
+  hsize_t shape[3];
+  H5Sget_simple_extent_dims(src_filespace1, shape, NULL);
+  hsize_t n_slcs = shape[0];
+  hsize_t n_rows = shape[1];
+  hsize_t n_cols = shape[2];
+  // Create arrays to hold the data as it's loaded from disk
+  Matrix2D *input_buffer1 = tp_matrixmalloc2d(n_rows, n_cols);
+  Matrix2D *input_buffer2 = tp_matrixmalloc2d(n_rows, n_cols);
+  Matrix2D *output_buffer = tp_matrixmalloc2d(n_rows, n_cols);
+  // Prepare HDF5 dataspaces for reading and writing
+  hsize_t strides[3] = {1, 1, 1};
+  hsize_t counts[3] = {1, 1, 1};
+  hsize_t blocks_mem[2] = {n_rows, n_cols};
+  hsize_t blocks_file[3] = {1, n_rows, n_cols};
+  hsize_t starts[3] = {0, 0, 0}; // Gets update as new rows are read
+  hid_t memspace = H5Screate_simple(RANK-1, blocks_mem, NULL);
+  // Iterate through each slice and do the subtraction
+  for (DIM islc=0; islc<n_slcs; islc++) {
+    starts[0] = islc;
+    // Load the data from disk into the buffers
+    H5Sselect_hyperslab(src_filespace1, // space_id,
+			H5S_SELECT_SET, // op,
+			starts,         // start
+			strides,        // stride
+			counts,         // count
+			blocks_file      // block
+			);
+    herr_t error;
+    error = H5Dread(src_ds1,           // dataset_id
+		    H5T_NATIVE_FLOAT,  // mem_type_id
+		    memspace,          // mem_space_id
+		    src_filespace1,    // file_space_id
+		    H5P_DEFAULT,       // xfer_plist_id
+		    input_buffer1->arr // buffer to hold the data
+		    );
+    if (error < 0) {
+      printf("Read failed\n");
+      return -1;
+    }
+    H5Sselect_hyperslab(src_filespace2, // space_id,
+			H5S_SELECT_SET, // op,
+			starts,         // start
+			strides,        // stride
+			counts,         // count
+			blocks_file      // block
+			);
+    error = H5Dread(src_ds2,           // dataset_id
+		    H5T_NATIVE_FLOAT,  // mem_type_id
+		    memspace,          // mem_space_id
+		    src_filespace2,    // file_space_id
+		    H5P_DEFAULT,       // xfer_plist_id
+		    input_buffer2->arr // buffer to hold the data
+		    );
+    if (error < 0) {
+      printf("Read failed\n");
+      return -1;
+    }
+    // Do the subtraction elemenet-wise
+    for (DIM irow=0; irow<n_rows; irow++) {
+      for (DIM icol=0; icol<n_cols; icol++) {
+	DDIM this_i = tp_indices2d(output_buffer, irow, icol);
+	output_buffer->arr[this_i] = input_buffer1->arr[this_i] - input_buffer2->arr[this_i];
+      }
+    }
+    // Write this slice back to disk
+    H5Sselect_hyperslab(dest_filespace, // space_id,
+			H5S_SELECT_SET, // op,
+			starts,         // start
+			strides,        // stride
+			counts,         // count
+			blocks_file     // block
+			);
+    error = H5Dwrite(dest_ds,            // dataset_id
+		     H5T_NATIVE_FLOAT,   // mem_type_id
+		     memspace,           // mem_space_id
+		     dest_filespace,     // file_space_id
+		     H5P_DEFAULT,        // xfer_plist_id
+		     output_buffer->arr  // *buf
+		     );
+    if (error < 0) {
+      fprintf(stderr, "Failed to write dataset: %d\n", error);
+      return -1;
+    }
+    print_progress(islc, shape[0]-1, "Subtracting");
+  }
+  /* // Load the first kernel-height slices worth of data from disk to memory */
+  /* hsize_t write_starts[3] = {0, 0, 0}; // Gets update as new rows are written */
+  /* hsize_t read_extent[3] = {n_slcs, n_rows, n_cols}; */
+  /* hid_t src_memspace_id = H5Screate_simple(RANK, read_blocks, NULL); */
+
+  /* if (error < 0) { */
+  /*   fprintf(stderr, "Failed to read dataset: %d\n", error); */
+  /*   return -1; */
+  /* } */
+  /* // Update the memory space so we can read one slice at a time */
+  /* read_blocks[0] = 1; // So we only get one slice at a time going forward */
+  /* hsize_t read_mem_starts[3] = {kernel->nslices - 1, 0, 0}; // Gets update as new rows are read */
+  /* src_memspace_id = H5Screate_simple(RANK, read_extent, NULL); */
+  /* H5Sselect_hyperslab(src_memspace_id, // space_id, */
+  /* 		      H5S_SELECT_SET,  // op, */
+  /* 		      read_mem_starts,     // start */
+  /* 		      strides,         // stride */
+  /* 		      counts,          // count */
+  /* 		      read_blocks      // block */
+  /* 		      ); */
+  /* // Loop through the slices and apply the 3D filter */
+  /* uint8_t in_head = 0; */
+  /* uint8_t in_tail = 0; */
+  /* uint8_t update_needed = 0; */
+  /* DIM dL = (kernel->nslices - 1) / 2; */
+  /* DIM new_buffslc; */
+  /* DIM new_diskslc; */
+  /* DIM new_islc; */
+  /* hsize_t read_file_starts[3] = {0, 0, 0}; // Gets update as new rows are read */
+  /* for (DIM islc=0; islc < shape[0]; islc++) { */
+  /*   // Update the in-memory buffer with a new slice if necessary */
+  /*   in_head = (islc <= dL); */
+  /*   in_tail = (islc >= (shape[0] - dL)); */
+  /*   update_needed = (!in_head && !in_tail); */
+  /*   if (update_needed) { */
+  /*     // Drop off the old slice and put the next one on top */
+  /*     new_diskslc = islc + dL; */
+  /*     new_islc = dL; */
+  /*     // Move each slice down */
+  /*     roll_buffer(working_buffer); */
+  /*     // Get a new last slice */
+  /*     read_file_starts[0] = new_diskslc; */
+  /*     H5Sselect_hyperslab(src_filespace_id,   // space_id, */
+  /* 			  H5S_SELECT_SET, // op, */
+  /* 			  read_file_starts,         // start */
+  /* 			  strides,        // stride */
+  /* 			  counts,         // count */
+  /* 			  read_blocks     // block */
+  /* 			  ); */
+  /*     herr_t error = H5Dread(src_ds,         // dataset_id */
+  /* 			     H5T_NATIVE_FLOAT,  // mem_type_id */
+  /* 			     src_memspace_id,  // mem_space_id */
+  /* 			     src_filespace_id,      // file_space_id */
+  /* 			     H5P_DEFAULT,       // xfer_plist_id */
+  /* 			     working_buffer->arr // buffer to hold the data */
+  /* 			     ); */
+  /*     if (error < 0) { */
+  /* 	fprintf(stderr, "Failed to read dataset: %d\n", error); */
+  /* 	return -1; */
+  /*     } */
+  /*   } else if (in_head) { */
+  /*     new_islc = islc; */
+  /*   } else if (in_tail) { */
+  /*     new_islc = islc - shape[0] + kernel->nrows; */
+  /*   } */
+  /*   // Step through each pixel in the row and apply the kernel *\/ */
+  /*   for (DIM irow=0; irow < n_rows; irow++) { */
+  /*     for (DIM icol=0; icol < n_cols; icol++) { */
+  /* 	DDIM this_idx = tp_indices2d(pore_slice_buffer, irow, icol); */
+  /* 	pore_slice_buffer->arr[this_idx] = tp_apply_kernel(working_buffer, */
+  /* 							   kernel, */
+  /* 							   new_islc, */
+  /* 							   irow, */
+  /* 							   icol, */
+  /* 							   filter_func); */
+  /*     } */
+  /*   } */
+  /*   // Write the slice to the HDF5 dataset */
+  /*   write_starts[0] = islc; */
+  /* } */
+  
+  /* return 0; */
+}
+
+
+char tp_apply_erosion(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
+{
+  return tp_apply_filter(src_ds, dest_ds, kernel, tp_apply_min);
+}
+
+char tp_apply_dilation(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
+{
+  return tp_apply_filter(src_ds, dest_ds, kernel, tp_apply_max);
+}
+
+char tp_apply_opening(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
+{
+  // Morphological opening on an image is defined as an erosion
+  // followed by a dilation.
+  char result;
+  // Erosion filter
+  result = tp_apply_erosion(src_ds, dest_ds, kernel);
+  if (result < 0) {
+    fprintf(stderr, "Error: Could not apply min filter.\n");
+  }
+  
+  // Dilation filter
+  result = tp_apply_dilation(dest_ds, dest_ds, kernel);
+  if (result < 0) {
+    fprintf(stderr, "Error: Could not apply max filter.\n");
+  }
+}
+
+
+char tp_apply_closing(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
+{
+  // Morphological closing on an image is defined as a dilation
+  // followed by an erosion. Closing can remove small dark spots
+  // (i.e. “pepper”) and connect small bright cracks.
+  char result;
+  // Dilation filter
+  result = tp_apply_dilation(src_ds, dest_ds, kernel);
+  if (result < 0) {
+    fprintf(stderr, "Error: Could not apply max filter.\n");
+  }
+  // Erosion filter
+  result = tp_apply_erosion(dest_ds, dest_ds, kernel);
+  if (result < 0) {
+    fprintf(stderr, "Error: Could not apply min filter.\n");
+  }
+}
+
+
+char tp_apply_white_tophat(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
+{
+  // The white_tophat of an image is defined as the image minus its
+  // morphological opening. This operation returns the bright spots of
+  // the image that are smaller than the structuring element.
+
+  // Apply the opening filter
+  char result;
+  result = tp_apply_opening(src_ds, dest_ds, kernel);
+
+  // Subtract the opening image from the original
+  if (result == 0) {
+    result = tp_subtract_datasets(src_ds, dest_ds, dest_ds);
+  }
+
+  return result;
+}
+  
+
+char tp_apply_black_tophat(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
+{
+  // The black_tophat of an image is defined as its morphological
+  // closing minus the original image. This operation returns the dark
+  // spots of the image that are smaller than the structuring element.
+
+  // Apply the closing filter
+  char result;
+  result = tp_apply_closing(src_ds, dest_ds, kernel);
+
+  // Subtract the original image from the closing
+  if (result == 0) {
+    result = tp_subtract_datasets(dest_ds, src_ds, dest_ds);
+  }
+
+  return result;
+}
+
+
 // Take a 3D volume of tomography data and isolate the pore structure using morphology filters
-char tp_extract_pores(hid_t volume_ds, hid_t pores_ds) {
-  printf("Starting pore extraction");
+char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, DIM min_pore_size, DIM max_pore_size) {
+  printf("Starting pore extraction\n");
   // Create a kernel for the black tophat filters
   Matrix3D *kernelmax = tp_matrixmalloc(PORE_MAX_SIZE, PORE_MAX_SIZE, PORE_MAX_SIZE);
   tp_ellipsoid(kernelmax);
@@ -276,20 +557,18 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds) {
   tp_box(kernelmin);
 
   // Prepare a temporary dataset to hold the intermediate datasets
-  
+  hid_t src_space = H5Dget_space(volume_ds);
+  hid_t temporary_ds = tp_require_dataset("_tomopore_temp", h5fp, src_space);
 
-  // Apply opening filter
+  // Apply small black tophat filter
   char result;
-  result = tp_apply_filter(volume_ds, pores_ds, kernelmin, tp_apply_max);
-  if (result < 0) {
-    fprintf(stderr, "Error: Could not apply max filter.\n");
-  }
-  result = tp_apply_filter(pores_ds, pores_ds, kernelmin, tp_apply_min);
-  if (result < 0) {
-    fprintf(stderr, "Error: Could not apply min filter.\n");
-  }
+  result = tp_apply_black_tophat(volume_ds, temporary_ds, kernelmin);
 
-  
+  // Apply large black tophat filter
+  result = tp_apply_black_tophat(volume_ds, pores_ds, kernelmax);
+
+  // Subtract the two
+  result = tp_subtract_datasets(pores_ds, temporary_ds, pores_ds);
   // Free up memory and return
   free(kernelmax);
   free(kernelmin);
@@ -372,10 +651,10 @@ int main(int argc, char *argv[]) {
   char *datafile;
   DIM *min_pore_size = NULL;
   min_pore_size = malloc(sizeof(DIM));
-  *min_pore_size = 5;
+  *min_pore_size = PORE_MIN_SIZE;
   DIM *max_pore_size = NULL;
   max_pore_size = malloc(sizeof(DIM));
-  *max_pore_size = 31;
+  *max_pore_size = PORE_MAX_SIZE;
   // Parse command line arguments
   unsigned int args_error = parse_args(argc, argv,
 				       &ds_source_name, &ds_dest_name, &datafile,
@@ -420,10 +699,11 @@ int main(int argc, char *argv[]) {
     return -1;
   }
   // Open (or create) the destination dataset
-  dst_ds = require_dataset(ds_dest_name, h5fp, );
+  hid_t src_space = H5Dget_space(src_ds);
+  dst_ds = tp_require_dataset(ds_dest_name, h5fp, src_space);
   // Apply the morpohology filters to extract the pore structure
   char result = 0;
-  result = tp_extract_pores(src_ds, dst_ds);
+  result = tp_extract_pores(src_ds, dst_ds, h5fp, *min_pore_size, *max_pore_size);
   // Close all the datasets, dataspaces, etc
   H5Dclose(src_ds);
   H5Dclose(dst_ds);
@@ -557,12 +837,14 @@ float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow,
   char is_first_round = TRUE;
   uint64_t running_count = 0;
   // Iterate over the kernel dimensions, then apply them to the main arr
+  // i, j, k are in the buffer space
+  // l, m, n are in the kernel space
   for (DIM l=0; l < kernel->nslices; l++) {
+    i = islc + (l - dL);
     for (DIM m=0; m < kernel->nrows; m++) {
+      j = irow + (m - dM);
       for (DIM n=0; n < kernel->ncolumns; n++) {
 	// Calculate relative coordinates in the arr matrix
-	i = islc + (l - dL);
-	j = irow + (m - dM);
 	k = icol + (n - dN);
 	// Determine if the new coordinates are in bounds for the subvolume
 	is_in_bounds = ((i >= 0) && (i < subvolume->nslices) &&
