@@ -497,14 +497,14 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, DIM min_pore_
 }
 
 
-unsigned int parse_args(int argc, char *argv[], char **ds_source_name,
+int parse_args(int argc, char *argv[], char **ds_source_name,
 			char **ds_dest_name, char **datafile,
 			DIM *min_pore_size, DIM *max_pore_size)
 // Parse the command line arguments (*argc*, *argv*), and store the
 // results into the remaining pointers. Returns 0 if arguments are
 // valid, otherwise returns a negative number.
 {
-  unsigned int valid_args;
+  unsigned int valid_args = 0;
   for (int argidx=1; argidx < argc; argidx++) {
     if (strcmp(argv[argidx], "--source") == 0) {
       if (argidx + 1 < argc) {
@@ -534,7 +534,6 @@ unsigned int parse_args(int argc, char *argv[], char **ds_source_name,
       }
     } else if (strcmp(argv[argidx], "--max-pore-size") == 0) {
       if (argidx + 1 < argc) {
-	printf("Found\n");
 	*max_pore_size = atoi(argv[argidx+1]);
 	argidx++; // Increment the counter to skip the argument's value
       } else {
@@ -551,15 +550,17 @@ unsigned int parse_args(int argc, char *argv[], char **ds_source_name,
       // Required argument with the filename
       *datafile = (char *)malloc(strlen(argv[1])*sizeof(char));
       strcpy(*datafile, argv[1]);
-      printf("Inner filename: %s\n", *datafile);
       valid_args = 1;
     }
   }
   if (!valid_args) {
-    fprintf(stderr, "Usage: %s filename [--source <source_dataset>] [--dest <destination dataset>]\n",
+    fprintf(stderr, "Usage: %s filename [--source <str>] [--dest <str>]",
 	    argv[0]);
+    fprintf(stderr, " [--max-pore-size <int>] [--min-pore-size <int>]\n");
     return -1;
-  }  
+  } else {
+    return 0;
+  }
 }
 
 
@@ -577,17 +578,17 @@ int main(int argc, char *argv[]) {
   max_pore_size = malloc(sizeof(DIM));
   *max_pore_size = PORE_MAX_SIZE;
   // Parse command line arguments
-  unsigned int args_error = parse_args(argc, argv,
-				       &ds_source_name, &ds_dest_name, &datafile,
-				       min_pore_size, max_pore_size);
+  int args_error = parse_args(argc, argv,
+			      &ds_source_name, &ds_dest_name, &datafile,
+			      min_pore_size, max_pore_size);
+  if (args_error < 0) {
+    return -1;
+  }
   printf("Filename: %s\n", datafile);
   printf("Source dataset: %s\n", ds_source_name);
   printf("Destination dataset: %s\n", ds_dest_name);
   printf("Min pore size: %d\n", *min_pore_size);
   printf("Max pore size: %d\n", *max_pore_size);
-  if (args_error < 0) {
-    return -1;
-  }
   if (*min_pore_size >= *max_pore_size) {
     printf("Error: Max pore size (%d) must be larger than min pore size (%d).\n",
 	   *max_pore_size, *min_pore_size);

@@ -1,14 +1,18 @@
-CC=gcc -g -pg
+CC=gcc
 LINK=-lhdf5 -lpthread -lm
+INSTALLDIR=$(HOME)/bin/
 
-.phony: all, tests
+.phony: all, tests, install
 
-all: tomopore.out
+all: tomopore
 
 tests: tomopore_tests.out
 
-tomopore.out: src/tomopore.c
-	$(CC) -o tomopore.out src/tomopore.c $(LINK)
+install: tomopore
+	cp tomopore $(INSTALLDIR)
+
+tomopore: src/tomopore.c
+	$(CC) -o tomopore src/tomopore.c $(LINK)
 
 tomopore_tests.out: tests/test_math.c
 	$(CC) -o tomopore_tests.out tests/test_math.c $(LINK)
