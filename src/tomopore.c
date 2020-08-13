@@ -114,29 +114,6 @@ void roll_buffer(Matrix3D *buffer)
 }
 
 
-void *tp_apply_kernel_thread(void *args)
-{
-  // Unpack the payload
-  ThreadPayload *payload = (ThreadPayload *) args;
-  Matrix2D *pore_slice_buffer = payload->pore_slice_buffer;
-  Matrix3D *working_buffer = payload->working_buffer;
-  Matrix3D *kernel = payload->kernel;
-  // Now process the row
-  DDIM this_idx;
-  for (DIM irow=payload->row_start; irow < payload->row_end; irow++) {
-    for (DIM icol=0; icol < payload->n_cols; icol++) {
-      this_idx = tp_indices2d(pore_slice_buffer, irow, icol);
-      pore_slice_buffer->arr[this_idx] = tp_apply_kernel(working_buffer,
-							 kernel,
-							 payload->new_islc,
-							 irow,
-							 icol,
-							 payload->filter_func);
-    }
-  }
-}
-
-
 char tp_apply_filter
 (hid_t src_ds, hid_t dest_ds, Matrix3D *kernel,
  void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count, char *is_first_round)
@@ -251,45 +228,16 @@ char tp_apply_filter
       new_islc = islc - shape[0] + kernel->nrows;
     }
     // Step through each pixel in the row and apply the kernel */
-    /* DIM this_idx; */
-    /* for (DIM irow=0; irow < n_rows; irow++) { */
-    /*   for (DIM icol=0; icol < n_cols; icol++) { */
-    /* 	this_idx = tp_indices2d(pore_slice_buffer, irow, icol); */
-    /* 	pore_slice_buffer->arr[this_idx] = tp_apply_kernel(working_buffer, */
-    /* 							   kernel, */
-    /* 							   new_islc, */
-    /* 							   irow, */
-    /* 							   icol, */
-    /* 							   filter_func); */
-    /*   } */
-    /* } */
-    DIM n_threads = 6;
-    DIM rows_per_thread = (DIM) ceil((double) n_rows / (double) n_threads);
-    DIM next_row = 0;
-    pthread_t tids[n_threads];
-    ThreadPayload *payload;
-    for (DIM tidx=0; tidx < n_threads; tidx++) {
-      /* for (DIM irow=0; irow < n_rows; irow++) { */
-      if (next_row < n_rows) {
-	payload = malloc(sizeof(ThreadPayload));
-	payload->row_start = next_row;
-	next_row += rows_per_thread;
-	payload->row_end = min_d(next_row, n_rows);
-	payload->n_cols = n_cols;
-	payload->new_islc = new_islc;
-	payload->pore_slice_buffer = pore_slice_buffer;
-	payload->working_buffer = working_buffer;
-	payload->kernel = kernel;
-	payload->filter_func = filter_func;
-	pthread_create(&tids[tidx], NULL, tp_apply_kernel_thread, payload);
-      } else {
-	tids[tidx] = 0;
-      }
-    }
-    // Wait for threads to finish
-    for (pthread_t tidx=0; tidx < n_threads; tidx++) {
-      if (tids[tidx] > 0) {
-	pthread_join(tids[tidx], NULL);
+    DIM this_idx;
+    for (DIM irow=0; irow < n_rows; irow++) {
+      for (DIM icol=0; icol < n_cols; icol++) {
+	this_idx = tp_indices2d(pore_slice_buffer, irow, icol);
+	pore_slice_buffer->arr[this_idx] = tp_apply_kernel(working_buffer,
+							   kernel,
+							   new_islc,
+							   irow,
+							   icol,
+							   filter_func);
       }
     }
     // Write the slice to the HDF5 dataset
