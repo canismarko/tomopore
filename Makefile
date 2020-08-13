@@ -1,5 +1,5 @@
 CC=gcc -g -pg
-LINK=-lhdf5
+LINK=-lhdf5 -lpthread -lm
 
 .phony: all, tests
 

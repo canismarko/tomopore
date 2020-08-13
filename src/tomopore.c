@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
+#include <sys/sysinfo.h>
+#include <pthread.h>
 #include <hdf5.h>
 #include "tomopore.h"
 
@@ -106,6 +109,29 @@ void roll_buffer(Matrix3D *buffer)
 	new_idx = tp_indices(buffer, i+1, j, k);
 	buffer->arr[old_idx] = buffer->arr[new_idx];
       }
+    }
+  }
+}
+
+
+void *tp_apply_kernel_thread(void *args)
+{
+  // Unpack the payload
+  ThreadPayload *payload = (ThreadPayload *) args;
+  Matrix2D *pore_slice_buffer = payload->pore_slice_buffer;
+  Matrix3D *working_buffer = payload->working_buffer;
+  Matrix3D *kernel = payload->kernel;
+  // Now process the row
+  DDIM this_idx;
+  for (DIM irow=payload->row_start; irow < payload->row_end; irow++) {
+    for (DIM icol=0; icol < payload->n_cols; icol++) {
+      this_idx = tp_indices2d(pore_slice_buffer, irow, icol);
+      pore_slice_buffer->arr[this_idx] = tp_apply_kernel(working_buffer,
+							 kernel,
+							 payload->new_islc,
+							 irow,
+							 icol,
+							 payload->filter_func);
     }
   }
 }
@@ -225,16 +251,45 @@ char tp_apply_filter
       new_islc = islc - shape[0] + kernel->nrows;
     }
     // Step through each pixel in the row and apply the kernel */
-    DDIM this_idx;
-    for (DIM irow=0; irow < n_rows; irow++) {
-      for (DIM icol=0; icol < n_cols; icol++) {
-	this_idx = tp_indices2d(pore_slice_buffer, irow, icol);
-	pore_slice_buffer->arr[this_idx] = tp_apply_kernel(working_buffer,
-							   kernel,
-							   new_islc,
-							   irow,
-							   icol,
-							   filter_func);
+    /* DIM this_idx; */
+    /* for (DIM irow=0; irow < n_rows; irow++) { */
+    /*   for (DIM icol=0; icol < n_cols; icol++) { */
+    /* 	this_idx = tp_indices2d(pore_slice_buffer, irow, icol); */
+    /* 	pore_slice_buffer->arr[this_idx] = tp_apply_kernel(working_buffer, */
+    /* 							   kernel, */
+    /* 							   new_islc, */
+    /* 							   irow, */
+    /* 							   icol, */
+    /* 							   filter_func); */
+    /*   } */
+    /* } */
+    DIM n_threads = 6;
+    DIM rows_per_thread = (DIM) ceil((double) n_rows / (double) n_threads);
+    DIM next_row = 0;
+    pthread_t tids[n_threads];
+    ThreadPayload *payload;
+    for (DIM tidx=0; tidx < n_threads; tidx++) {
+      /* for (DIM irow=0; irow < n_rows; irow++) { */
+      if (next_row < n_rows) {
+	payload = malloc(sizeof(ThreadPayload));
+	payload->row_start = next_row;
+	next_row += rows_per_thread;
+	payload->row_end = min_d(next_row, n_rows);
+	payload->n_cols = n_cols;
+	payload->new_islc = new_islc;
+	payload->pore_slice_buffer = pore_slice_buffer;
+	payload->working_buffer = working_buffer;
+	payload->kernel = kernel;
+	payload->filter_func = filter_func;
+	pthread_create(&tids[tidx], NULL, tp_apply_kernel_thread, payload);
+      } else {
+	tids[tidx] = 0;
+      }
+    }
+    // Wait for threads to finish
+    for (pthread_t tidx=0; tidx < n_threads; tidx++) {
+      if (tids[tidx] > 0) {
+	pthread_join(tids[tidx], NULL);
       }
     }
     // Write the slice to the HDF5 dataset
@@ -376,88 +431,6 @@ char tp_subtract_datasets(hid_t src_ds1, hid_t src_ds2, hid_t dest_ds)
     }
     print_progress(islc, shape[0]-1, "Subtracting");
   }
-  /* // Load the first kernel-height slices worth of data from disk to memory */
-  /* hsize_t write_starts[3] = {0, 0, 0}; // Gets update as new rows are written */
-  /* hsize_t read_extent[3] = {n_slcs, n_rows, n_cols}; */
-  /* hid_t src_memspace_id = H5Screate_simple(RANK, read_blocks, NULL); */
-
-  /* if (error < 0) { */
-  /*   fprintf(stderr, "Failed to read dataset: %d\n", error); */
-  /*   return -1; */
-  /* } */
-  /* // Update the memory space so we can read one slice at a time */
-  /* read_blocks[0] = 1; // So we only get one slice at a time going forward */
-  /* hsize_t read_mem_starts[3] = {kernel->nslices - 1, 0, 0}; // Gets update as new rows are read */
-  /* src_memspace_id = H5Screate_simple(RANK, read_extent, NULL); */
-  /* H5Sselect_hyperslab(src_memspace_id, // space_id, */
-  /* 		      H5S_SELECT_SET,  // op, */
-  /* 		      read_mem_starts,     // start */
-  /* 		      strides,         // stride */
-  /* 		      counts,          // count */
-  /* 		      read_blocks      // block */
-  /* 		      ); */
-  /* // Loop through the slices and apply the 3D filter */
-  /* uint8_t in_head = 0; */
-  /* uint8_t in_tail = 0; */
-  /* uint8_t update_needed = 0; */
-  /* DIM dL = (kernel->nslices - 1) / 2; */
-  /* DIM new_buffslc; */
-  /* DIM new_diskslc; */
-  /* DIM new_islc; */
-  /* hsize_t read_file_starts[3] = {0, 0, 0}; // Gets update as new rows are read */
-  /* for (DIM islc=0; islc < shape[0]; islc++) { */
-  /*   // Update the in-memory buffer with a new slice if necessary */
-  /*   in_head = (islc <= dL); */
-  /*   in_tail = (islc >= (shape[0] - dL)); */
-  /*   update_needed = (!in_head && !in_tail); */
-  /*   if (update_needed) { */
-  /*     // Drop off the old slice and put the next one on top */
-  /*     new_diskslc = islc + dL; */
-  /*     new_islc = dL; */
-  /*     // Move each slice down */
-  /*     roll_buffer(working_buffer); */
-  /*     // Get a new last slice */
-  /*     read_file_starts[0] = new_diskslc; */
-  /*     H5Sselect_hyperslab(src_filespace_id,   // space_id, */
-  /* 			  H5S_SELECT_SET, // op, */
-  /* 			  read_file_starts,         // start */
-  /* 			  strides,        // stride */
-  /* 			  counts,         // count */
-  /* 			  read_blocks     // block */
-  /* 			  ); */
-  /*     herr_t error = H5Dread(src_ds,         // dataset_id */
-  /* 			     H5T_NATIVE_FLOAT,  // mem_type_id */
-  /* 			     src_memspace_id,  // mem_space_id */
-  /* 			     src_filespace_id,      // file_space_id */
-  /* 			     H5P_DEFAULT,       // xfer_plist_id */
-  /* 			     working_buffer->arr // buffer to hold the data */
-  /* 			     ); */
-  /*     if (error < 0) { */
-  /* 	fprintf(stderr, "Failed to read dataset: %d\n", error); */
-  /* 	return -1; */
-  /*     } */
-  /*   } else if (in_head) { */
-  /*     new_islc = islc; */
-  /*   } else if (in_tail) { */
-  /*     new_islc = islc - shape[0] + kernel->nrows; */
-  /*   } */
-  /*   // Step through each pixel in the row and apply the kernel *\/ */
-  /*   for (DIM irow=0; irow < n_rows; irow++) { */
-  /*     for (DIM icol=0; icol < n_cols; icol++) { */
-  /* 	DDIM this_idx = tp_indices2d(pore_slice_buffer, irow, icol); */
-  /* 	pore_slice_buffer->arr[this_idx] = tp_apply_kernel(working_buffer, */
-  /* 							   kernel, */
-  /* 							   new_islc, */
-  /* 							   irow, */
-  /* 							   icol, */
-  /* 							   filter_func); */
-  /*     } */
-  /*   } */
-  /*   // Write the slice to the HDF5 dataset */
-  /*   write_starts[0] = islc; */
-  /* } */
-  
-  /* return 0; */
 }
 
 
@@ -875,6 +848,18 @@ float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow,
     }
   }
   return (float) running_total;
+}
+
+
+DIM min_d(DIM x, DIM y) 
+{
+  return (x < y) ? x : y;
+}
+
+
+DIM max_d(DIM x, DIM y) 
+{
+  return (x > y) ? x : y;
 }
 
 

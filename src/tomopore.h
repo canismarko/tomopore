@@ -28,6 +28,16 @@ typedef struct {
   VEC y;
   VEC x;
 } Vector;
+typedef struct ThreadPayload {
+  DIM row_start;
+  DIM row_end;
+  DIM n_cols;
+  DIM new_islc;
+  Matrix2D *pore_slice_buffer;
+  Matrix3D *working_buffer;
+  Matrix3D *kernel;
+  void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, DDIM *running_count, char *is_first_round);
+} ThreadPayload;
 
 // Function declarations
 float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow, DIM icol,
@@ -53,6 +63,9 @@ DDIM tp_indices(Matrix3D *vol, DIM islice, DIM irow, DIM icolumn);
 DDIM tp_indices2d(Matrix2D *vol, DIM irow, DIM icolumn);
 
 void roll_buffer(Matrix3D *buffer);
+
+DIM min_d(DIM x, DIM y);
+DIM max_d(DIM x, DIM y);
 
 /* Applied kernel functions */
 /* ======================== */
