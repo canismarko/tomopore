@@ -19,14 +19,35 @@
 /* memory. To avoid running out of memory, intermediate arrays are saved */
 /* in HDF5 datasets. */
 
-hid_t tp_require_dataset
+
+hid_t tp_replace_dataset
 (char *dataset_name, hid_t h5fp, hid_t dataspace)
+// Replace an existing dataset with a new one specified in *dataspace*
 {
   hid_t new_dataset_id;
   if (H5Lexists(h5fp, dataset_name, H5P_DEFAULT)) {
+    // Unlink the old dataset
+    printf("Replacing dataset: %s\n", dataset_name);
+    herr_t error = H5Ldelete(h5fp,         // loc_id
+			     dataset_name, // *name
+			     H5P_DEFAULT   // access property list
+			     );
+  }
+  // Now create a new dataset
+  new_dataset_id = tp_require_dataset(dataset_name, h5fp, dataspace);
+  return new_dataset_id;
+}
+
+hid_t tp_require_dataset
+(char *dataset_name, hid_t h5fp, hid_t dataspace)
+// Open an existing dataset, or create a new one if one doesn't exist
+{
+  hid_t new_dataset_id;
+  if (H5Lexists(h5fp, dataset_name, H5P_DEFAULT)) {
+    // Compare extents to make sure they match
     new_dataset_id = H5Dopen(h5fp, dataset_name, H5P_DEFAULT);
   } else {
-    // Create the destination dataset if it didn't exist
+    // Create new dataset if it didn't already exist
     printf("Creating new dataset: %s\n", dataset_name);
     new_dataset_id = H5Dcreate(h5fp,             // loc_id
 		       dataset_name,      // name
@@ -479,7 +500,7 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, DIM min_pore_
 
   // Prepare a temporary dataset to hold the intermediate datasets
   hid_t src_space = H5Dget_space(volume_ds);
-  hid_t temporary_ds = tp_require_dataset("_tomopore_temp", h5fp, src_space);
+  hid_t temporary_ds = tp_replace_dataset("_tomopore_temp", h5fp, src_space);
 
   // Apply small black tophat filter
   char result;
@@ -620,9 +641,9 @@ int main(int argc, char *argv[]) {
     }
     return -1;
   }
-  // Open (or create) the destination dataset
+  // Create a new destination dataset
   hid_t src_space = H5Dget_space(src_ds);
-  dst_ds = tp_require_dataset(ds_dest_name, h5fp, src_space);
+  dst_ds = tp_replace_dataset(ds_dest_name, h5fp, src_space);
   // Apply the morpohology filters to extract the pore structure
   char result = 0;
   result = tp_extract_pores(src_ds, dst_ds, h5fp, *min_pore_size, *max_pore_size);

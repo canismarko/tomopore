@@ -67,6 +67,9 @@ void roll_buffer(Matrix3D *buffer);
 DIM min_d(DIM x, DIM y);
 DIM max_d(DIM x, DIM y);
 
+hid_t tp_replace_dataset(char *dataset_name, hid_t h5fp, hid_t dataspace);
+hid_t tp_require_dataset(char *dataset_name, hid_t h5fp, hid_t dataspace);
+
 /* Applied kernel functions */
 /* ======================== */
 
