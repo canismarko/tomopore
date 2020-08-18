@@ -2,8 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <sys/sysinfo.h>
-#include <pthread.h>
 #include <hdf5.h>
 #include "tomopore.h"
 
@@ -27,7 +25,7 @@ hid_t tp_replace_dataset
   hid_t new_dataset_id;
   if (H5Lexists(h5fp, dataset_name, H5P_DEFAULT)) {
     // Unlink the old dataset
-    printf("Replacing dataset: %s\n", dataset_name);
+    printf("Removing existing dataset: %s\n", dataset_name);
     herr_t error = H5Ldelete(h5fp,         // loc_id
 			     dataset_name, // *name
 			     H5P_DEFAULT   // access property list
@@ -136,9 +134,7 @@ void roll_buffer(Matrix3D *buffer)
 
 
 char tp_apply_filter
-(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel,
- void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count, char *is_first_round)
- )
+(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel, enum operation op)
 // Apply a given element-wise filter function to using the provided
 // kernel to *src_ds* HDF5 dataset and save it to *dest_ds* HDF5
 // dataset. *src_ds* and *dest_ds* can be the same dataset, in which
@@ -258,7 +254,7 @@ char tp_apply_filter
 							   new_islc,
 							   irow,
 							   icol,
-							   filter_func);
+							   op);
       }
     }
     // Write the slice to the HDF5 dataset
@@ -405,12 +401,12 @@ char tp_subtract_datasets(hid_t src_ds1, hid_t src_ds2, hid_t dest_ds)
 
 char tp_apply_erosion(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 {
-  return tp_apply_filter(src_ds, dest_ds, kernel, tp_apply_min);
+  return tp_apply_filter(src_ds, dest_ds, kernel, Min);
 }
 
 char tp_apply_dilation(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 {
-  return tp_apply_filter(src_ds, dest_ds, kernel, tp_apply_max);
+  return tp_apply_filter(src_ds, dest_ds, kernel, Max);
 }
 
 char tp_apply_opening(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
@@ -490,7 +486,7 @@ char tp_apply_black_tophat(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 
 
 // Take a 3D volume of tomography data and isolate the pore structure using morphology filters
-char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, DIM min_pore_size, DIM max_pore_size) {
+char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, DIM min_pore_size, DIM max_pore_size) {
   printf("Starting pore extraction\n");
   // Create a kernel for the black tophat filters
   Matrix3D *kernelmax = tp_matrixmalloc(PORE_MAX_SIZE, PORE_MAX_SIZE, PORE_MAX_SIZE);
@@ -500,7 +496,7 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, DIM min_pore_
 
   // Prepare a temporary dataset to hold the intermediate datasets
   hid_t src_space = H5Dget_space(volume_ds);
-  hid_t temporary_ds = tp_replace_dataset("_tomopore_temp", h5fp, src_space);
+  hid_t temporary_ds = tp_replace_dataset(strcat(name, "_tomopore_temp"), h5fp, src_space);
 
   // Apply small black tophat filter
   char result;
@@ -512,6 +508,7 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, DIM min_pore_
   // Subtract the two
   result = tp_subtract_datasets(pores_ds, temporary_ds, pores_ds);
   // Free up memory and return
+  H5Dclose(temporary_ds);
   free(kernelmax);
   free(kernelmin);
   return 0;
@@ -646,7 +643,7 @@ int main(int argc, char *argv[]) {
   dst_ds = tp_replace_dataset(ds_dest_name, h5fp, src_space);
   // Apply the morpohology filters to extract the pore structure
   char result = 0;
-  result = tp_extract_pores(src_ds, dst_ds, h5fp, *min_pore_size, *max_pore_size);
+  result = tp_extract_pores(src_ds, dst_ds, h5fp, ds_dest_name, *min_pore_size, *max_pore_size);
   // Close all the datasets, dataspaces, etc
   H5Dclose(src_ds);
   H5Dclose(dst_ds);
@@ -763,8 +760,7 @@ void tp_box(Matrix3D *kernel) {
 
 /* Take a buffer of data, and apply the kernel to each row/column pixel for the given slice index
      *islc*, *irow*, *icol* give the current position in the *subvolume* buffer */
-float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow, DIM icol,
-		      void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count, char *is_first_round))
+float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow, DIM icol, enum operation op)
 // i, j, k -> indices of subvolume
 // l, m, n -> indices of kernel
 // dL, dM, dN -> reach of the kernel, so for a 3x3x3 kernel, each is (3-1)/2 = 1
@@ -779,9 +775,9 @@ float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow,
   DDIM kernel_idx = 0;
   DTYPE kernel_val, volume_val;
   int is_in_bounds;
-  double running_total = 0;
   char is_first_round = TRUE;
-  uint64_t running_count = 0;
+  double running_total = 0;
+  char replace_value = FALSE;
   // Iterate over the kernel dimensions, then apply them to the main arr
   // i, j, k are in the buffer space
   // l, m, n are in the kernel space
@@ -811,7 +807,19 @@ float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow,
 	  volume_val = subvolume->arr[subvolume_idx + k];
 	  kernel_val = kernel->arr[kernel_idx];
 	  // Apply the actual kernel filter function
-	  (*filter_func)(volume_val, kernel_val, &running_total, &running_count, &is_first_round);
+	  if (kernel_val > 0) {
+	    // Set the beginning value if one hasn't been set yet
+	    if (is_first_round) {
+	      running_total = volume_val;
+	      is_first_round = FALSE;
+	    }
+	    // Save this value as the new minimum/maximum if it's bigger than the old one
+	    replace_value = (volume_val < running_total) && (op == Min);
+	    replace_value = replace_value || ((volume_val > running_total) && (op == Max));
+	    if (replace_value) {
+	      running_total = volume_val;
+	    }
+	  }	  
 	}
 	kernel_idx++;
       }
@@ -830,33 +838,4 @@ DIM min_d(DIM x, DIM y)
 DIM max_d(DIM x, DIM y) 
 {
   return (x > y) ? x : y;
-}
-
-
-void tp_apply_max
-(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count, char *is_first_round)
-{
-  if (kernel_val > 0) {
-    // Save this value as the new maximum if it's bigger than the old one
-    if ((volume_val > *running_total) || *is_first_round) {
-      *running_total = volume_val;
-    }
-    // Increment the counter, even though it doesn't really matter for calculating maxima
-    *running_count++;
-    *is_first_round = FALSE;
-  }
-}
-
-void tp_apply_min
-(DTYPE volume_val, DTYPE kernel_val, double *running_total, uint64_t *running_count, char *is_first_round)
-{
-  if (kernel_val > 0) {
-    // Save this value as the new maximum if it's bigger than the old one
-    if ((volume_val < *running_total) || *is_first_round) {
-      *running_total = volume_val;
-    }
-    // Increment the counter, even though it doesn't really matter for calculating maxima
-    *running_count++;
-    *is_first_round = FALSE;
-  }
 }

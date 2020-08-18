@@ -39,13 +39,13 @@ typedef struct ThreadPayload {
   void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, DDIM *running_count, char *is_first_round);
 } ThreadPayload;
 
-// Function declarations
-float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow, DIM icol,
-		      void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, DDIM *running_count, char *is_first_round));
+enum operation {Min, Max};
 
-char tp_apply_filter(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel,
-		     void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, DDIM *running_count, char *is_first_round));
-char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, DIM min_pore_size, DIM max_pore_size);
+// Function declarations
+float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow, DIM icol, enum operation op);
+
+char tp_apply_filter(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel, enum operation op);
+char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, DIM min_pore_size, DIM max_pore_size);
 
 Matrix3D *tp_matrixmalloc(DIM n_slices, DIM n_rows, DIM n_columns);
 
@@ -69,18 +69,3 @@ DIM max_d(DIM x, DIM y);
 
 hid_t tp_replace_dataset(char *dataset_name, hid_t h5fp, hid_t dataspace);
 hid_t tp_require_dataset(char *dataset_name, hid_t h5fp, hid_t dataspace);
-
-/* Applied kernel functions */
-/* ======================== */
-
-/* Each one of these functions can be given to ``tp_apply_kernel`` to */
-/* calculate the metric for that pixel and apply to it to the running */
-/* total. They must all have matching signatures, though do no */
-/* necessarily have to use all the values that are given. *running_count* */
-/* is intended to hold the number of inputs that have been processed and */
-/* can be useful when calculating means, etc. *is_first_round* can be */
-/* set by the function to keep track of whether initialization is */
-/* needed. */
-
-void tp_apply_max(DTYPE volume_val, DTYPE kernel_val, double *running_total, DDIM *running_count, char *is_first_round);
-void tp_apply_min(DTYPE volume_val, DTYPE kernel_val, double *running_total, DDIM *running_count, char *is_first_round);
