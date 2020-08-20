@@ -7,7 +7,7 @@
 
 // Global constants
 #define PORE_MIN_SIZE 5
-#define PORE_MAX_SIZE 15
+#define PORE_MAX_SIZE 51
 #define RANK 3
 #define TRUE 1
 #define FALSE 0
@@ -401,11 +401,13 @@ char tp_subtract_datasets(hid_t src_ds1, hid_t src_ds2, hid_t dest_ds)
 
 char tp_apply_erosion(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 {
+  printf("Applying erosion filter: (%d, %d, %d) kernel.\n", kernel.nslices, kernel.nrows, kernel.ncolums);
   return tp_apply_filter(src_ds, dest_ds, kernel, Min);
 }
 
 char tp_apply_dilation(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 {
+  printf("Applying dilation filter: (%d, %d, %d) kernel.\n", kernel.nslices, kernel.nrows, kernel.ncolums);
   return tp_apply_filter(src_ds, dest_ds, kernel, Max);
 }
 
@@ -492,23 +494,27 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, D
   Matrix3D *kernelmax = tp_matrixmalloc(PORE_MAX_SIZE, PORE_MAX_SIZE, PORE_MAX_SIZE);
   tp_ellipsoid(kernelmax);
   Matrix3D *kernelmin = tp_matrixmalloc(PORE_MIN_SIZE, PORE_MIN_SIZE, PORE_MIN_SIZE);
-  tp_box(kernelmin);
+  tp_ellipsoid(kernelmin);
 
   // Prepare a temporary dataset to hold the intermediate datasets
   hid_t src_space = H5Dget_space(volume_ds);
   hid_t temporary_ds = tp_replace_dataset(strcat(name, "_tomopore_temp"), h5fp, src_space);
+  hid_t temporary_ds2 = tp_replace_dataset(strcat(name, "_tomopore_temp2"), h5fp, src_space);
 
   // Apply small black tophat filter
   char result;
   result = tp_apply_black_tophat(volume_ds, temporary_ds, kernelmin);
 
   // Apply large black tophat filter
+  // result = tp_apply_black_tophat(volume_ds, temporary_ds2, kernelmax);
   result = tp_apply_black_tophat(volume_ds, pores_ds, kernelmax);
 
   // Subtract the two
   result = tp_subtract_datasets(pores_ds, temporary_ds, pores_ds);
+  /* result = tp_subtract_datasets(temporary_ds2, temporary_ds, pores_ds); */
   // Free up memory and return
   H5Dclose(temporary_ds);
+  H5Dclose(temporary_ds2); 
   free(kernelmax);
   free(kernelmin);
   return 0;
