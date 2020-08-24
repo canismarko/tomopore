@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <hdf5.h>
 
+enum operation {Min, Max};
+
 // Type definitions
 typedef uint16_t DIM;
 typedef uint64_t DDIM;
@@ -36,10 +38,8 @@ typedef struct ThreadPayload {
   Matrix2D *pore_slice_buffer;
   Matrix3D *working_buffer;
   Matrix3D *kernel;
-  void (*filter_func)(DTYPE volume_val, DTYPE kernel_val, double *running_total, DDIM *running_count, char *is_first_round);
+  enum operation op;
 } ThreadPayload;
-
-enum operation {Min, Max};
 
 // Function declarations
 float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow, DIM icol, enum operation op);

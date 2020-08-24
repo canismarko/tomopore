@@ -3,6 +3,7 @@
 #include <string.h>
 #include <math.h>
 #include <hdf5.h>
+#include <pthread.h>
 #include "tomopore.h"
 
 // Global constants
@@ -133,6 +134,29 @@ void roll_buffer(Matrix3D *buffer)
 }
 
 
+void *tp_apply_kernel_thread(void *args)
+{
+  // Unpack the payload
+  ThreadPayload *payload = (ThreadPayload *) args;
+  Matrix2D *pore_slice_buffer = payload->pore_slice_buffer;
+  Matrix3D *working_buffer = payload->working_buffer;
+  Matrix3D *kernel = payload->kernel;
+  // Now process the row
+  DDIM this_idx;
+  for (DIM irow=payload->row_start; irow < payload->row_end; irow++) {
+    for (DIM icol=0; icol < payload->n_cols; icol++) {
+      this_idx = tp_indices2d(pore_slice_buffer, irow, icol);
+      pore_slice_buffer->arr[this_idx] = tp_apply_kernel(working_buffer,
+							 kernel,
+							 payload->new_islc,
+							 irow,
+							 icol,
+							 payload->op);
+    }
+  }
+}
+
+
 char tp_apply_filter
 (hid_t src_ds, hid_t dest_ds, Matrix3D *kernel, enum operation op)
 // Apply a given element-wise filter function to using the provided
@@ -245,16 +269,45 @@ char tp_apply_filter
       new_islc = islc - shape[0] + kernel->nrows;
     }
     // Step through each pixel in the row and apply the kernel */
-    DIM this_idx;
-    for (DIM irow=0; irow < n_rows; irow++) {
-      for (DIM icol=0; icol < n_cols; icol++) {
-	this_idx = tp_indices2d(pore_slice_buffer, irow, icol);
-	pore_slice_buffer->arr[this_idx] = tp_apply_kernel(working_buffer,
-							   kernel,
-							   new_islc,
-							   irow,
-							   icol,
-							   op);
+    /* DIM this_idx; */
+    /* for (DIM irow=0; irow < n_rows; irow++) { */
+    /*   for (DIM icol=0; icol < n_cols; icol++) { */
+    /* 	this_idx = tp_indices2d(pore_slice_buffer, irow, icol); */
+    /* 	pore_slice_buffer->arr[this_idx] = tp_apply_kernel(working_buffer, */
+    /* 							   kernel, */
+    /* 							   new_islc, */
+    /* 							   irow, */
+    /* 							   icol, */
+    /* 							   op); */
+    /*   } */
+    /* } */
+    DIM n_threads = 16;
+    DIM rows_per_thread = (DIM) ceil((double) n_rows / (double) n_threads);
+    DIM next_row = 0;
+    pthread_t tids[n_threads];
+    ThreadPayload *payload;
+    for (DIM tidx=0; tidx < n_threads; tidx++) {
+      /* for (DIM irow=0; irow < n_rows; irow++) { */
+      if (next_row < n_rows) {
+	payload = malloc(sizeof(ThreadPayload));
+	payload->row_start = next_row;
+	next_row += rows_per_thread;
+	payload->row_end = min_d(next_row, n_rows);
+	payload->n_cols = n_cols;
+	payload->new_islc = new_islc;
+	payload->pore_slice_buffer = pore_slice_buffer;
+	payload->working_buffer = working_buffer;
+	payload->kernel = kernel;
+	payload->op = op;
+	pthread_create(&tids[tidx], NULL, tp_apply_kernel_thread, payload);
+      } else {
+	tids[tidx] = 0;
+      }
+    }
+    // Wait for threads to finish
+    for (pthread_t tidx=0; tidx < n_threads; tidx++) {
+      if (tids[tidx] > 0) {
+	pthread_join(tids[tidx], NULL);
       }
     }
     // Write the slice to the HDF5 dataset
@@ -401,13 +454,13 @@ char tp_subtract_datasets(hid_t src_ds1, hid_t src_ds2, hid_t dest_ds)
 
 char tp_apply_erosion(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 {
-  printf("Applying erosion filter: (%d, %d, %d) kernel.\n", kernel.nslices, kernel.nrows, kernel.ncolums);
+  printf("Applying erosion filter: (%d, %d, %d) kernel.\n", kernel->nslices, kernel->nrows, kernel->ncolumns);
   return tp_apply_filter(src_ds, dest_ds, kernel, Min);
 }
 
 char tp_apply_dilation(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 {
-  printf("Applying dilation filter: (%d, %d, %d) kernel.\n", kernel.nslices, kernel.nrows, kernel.ncolums);
+  printf("Applying dilation filter: (%d, %d, %d) kernel.\n", kernel->nslices, kernel->nrows, kernel->ncolumns);
   return tp_apply_filter(src_ds, dest_ds, kernel, Max);
 }
 
@@ -491,30 +544,28 @@ char tp_apply_black_tophat(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, DIM min_pore_size, DIM max_pore_size) {
   printf("Starting pore extraction\n");
   // Create a kernel for the black tophat filters
-  Matrix3D *kernelmax = tp_matrixmalloc(PORE_MAX_SIZE, PORE_MAX_SIZE, PORE_MAX_SIZE);
+  Matrix3D *kernelmax = tp_matrixmalloc(max_pore_size, max_pore_size, max_pore_size);
   tp_ellipsoid(kernelmax);
-  Matrix3D *kernelmin = tp_matrixmalloc(PORE_MIN_SIZE, PORE_MIN_SIZE, PORE_MIN_SIZE);
+  Matrix3D *kernelmin = tp_matrixmalloc(min_pore_size, min_pore_size, min_pore_size);
   tp_ellipsoid(kernelmin);
 
   // Prepare a temporary dataset to hold the intermediate datasets
   hid_t src_space = H5Dget_space(volume_ds);
   hid_t temporary_ds = tp_replace_dataset(strcat(name, "_tomopore_temp"), h5fp, src_space);
-  hid_t temporary_ds2 = tp_replace_dataset(strcat(name, "_tomopore_temp2"), h5fp, src_space);
 
   // Apply small black tophat filter
   char result;
   result = tp_apply_black_tophat(volume_ds, temporary_ds, kernelmin);
-
+  
   // Apply large black tophat filter
-  // result = tp_apply_black_tophat(volume_ds, temporary_ds2, kernelmax);
   result = tp_apply_black_tophat(volume_ds, pores_ds, kernelmax);
-
+  
   // Subtract the two
   result = tp_subtract_datasets(pores_ds, temporary_ds, pores_ds);
-  /* result = tp_subtract_datasets(temporary_ds2, temporary_ds, pores_ds); */
+
   // Free up memory and return
   H5Dclose(temporary_ds);
-  H5Dclose(temporary_ds2); 
+  /* H5Dclose(temporary_ds2);  */
   free(kernelmax);
   free(kernelmin);
   return 0;

@@ -2,7 +2,7 @@
 # CC=gcc -g -pg
 # GCC for deployment
 CC=gcc -O2
-LINK=-lhdf5 -lm
+LINK=-lhdf5 -lm -lpthread
 INSTALLDIR=$(HOME)/bin/
 
 .phony: all, tests, install
