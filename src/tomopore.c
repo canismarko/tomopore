@@ -12,7 +12,8 @@
 #define FALSE 0
 #define PORE_MIN_SIZE 5
 #define PORE_MAX_SIZE 51
-#define LEAD_MAX_SIZE 25
+#define LEAD_MIN_SIZE 5
+#define LEAD_MAX_SIZE 35
 #define SOURCE_NAME "volume"
 #define DEST_NAME_PORES "pores"
 #define DEST_NAME_LEAD "lead"
@@ -21,7 +22,6 @@
 /* with a 3D kernel so that we don't lose data, but that means lots more */
 /* memory. To avoid running out of memory, intermediate arrays are saved */
 /* in HDF5 datasets. */
-
 
 hid_t tp_replace_dataset
 (char *dataset_name, hid_t h5fp, hid_t dataspace)
@@ -519,6 +519,8 @@ char tp_apply_white_tophat(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
   // Subtract the opening image from the original
   if (result == 0) {
     result = tp_subtract_datasets(src_ds, dest_ds, dest_ds);
+  } else {
+    fprintf(stderr, "Failed to apply morphological opening for white tophat: %d\n", result);
   }
 
   return result;
@@ -557,7 +559,7 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, D
   Matrix3D *kernelmin = tp_matrixmalloc(min_pore_size, min_pore_size, min_pore_size);
   tp_ellipsoid(kernelmin);
 
-  // Prepare a temporary dataset to hold the intermediate datasets
+  // Prepare a temporary dataset to hold the intermediate data
   hid_t src_space = H5Dget_space(volume_ds);
   hid_t temporary_ds = tp_replace_dataset(strcat(name, "_tomopore_temp"), h5fp, src_space);
 
@@ -581,26 +583,42 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, D
 
 
 // Take a 3D volume of tomography data and isolate the lead structure using morphology filters
-char tp_extract_lead(hid_t volume_ds, hid_t lead_ds, hid_t h5fp, char *name, DIM max_lead_size) {
+char tp_extract_lead(hid_t volume_ds, hid_t lead_ds, hid_t h5fp, char *name, DIM min_lead_size, DIM max_lead_size) {
   printf("Starting lead extraction\n");
   // Create a kernel for the black tophat filters
   Matrix3D *kernelmax = tp_matrixmalloc(max_lead_size, max_lead_size, max_lead_size);
   tp_ellipsoid(kernelmax);
+  Matrix3D *kernelmin = tp_matrixmalloc(min_lead_size, min_lead_size, min_lead_size);
+  tp_ellipsoid(kernelmin);
 
-  // Apply large black tophat filter
+  // Prepare a temporary dataset to hold the intermediate data
+  hid_t src_space = H5Dget_space(volume_ds);
+  hid_t temporary_ds = tp_replace_dataset(strcat(name, "_tomopore_temp"), h5fp, src_space);
+
+  // Apply small black tophat filter
   char result;
+  result = tp_apply_white_tophat(volume_ds, temporary_ds, kernelmin);
+  
+  // Apply large black tophat filter
   result = tp_apply_white_tophat(volume_ds, lead_ds, kernelmax);
   
+  // Subtract the two
+  result = tp_subtract_datasets(lead_ds, temporary_ds, lead_ds);
+
+  // Free up memory and return
+  H5Dclose(temporary_ds);
   /* H5Dclose(temporary_ds2);  */
   free(kernelmax);
+  free(kernelmin);
   return 0;
+
 }
 
 
 int parse_args
 (int argc, char *argv[], char **datafile,
  char **ds_source_name, char **ds_dest_name_pores, char **ds_dest_name_lead,
- DIM *min_pore_size, DIM *max_pore_size, DIM *max_lead_size)
+ DIM *min_pore_size, DIM *max_pore_size, DIM *min_lead_size, DIM *max_lead_size)
 // Parse the command line arguments (*argc*, *argv*), and store the
 // results into the remaining pointers. Returns 0 if arguments are
 // valid, otherwise returns a negative number.
@@ -650,6 +668,14 @@ int parse_args
 	valid_args = 0;
 	break;
       }
+    } else if (strcmp(argv[argidx], "--min-lead-size") == 0) {
+      if (argidx + 1 < argc) {
+	*min_lead_size = atoi(argv[argidx+1]);
+	argidx++; // Increment the counter to skip the argument's value
+      } else {
+	valid_args = 0;
+	break;
+      }      
     } else if (strcmp(argv[argidx], "--max-lead-size") == 0) {
       if (argidx + 1 < argc) {
 	*max_lead_size = atoi(argv[argidx+1]);
@@ -674,7 +700,8 @@ int parse_args
   if (!valid_args) {
     fprintf(stderr, "Usage: %s filename [--source <str>] [--dest-pores <str>] [--dest-lead <str>]",
 	    argv[0]);
-    fprintf(stderr, " [--max-pore-size <int>] [--min-pore-size <int>]\n");
+    fprintf(stderr, " [--max-pore-size <int>] [--min-pore-size <int>]");
+    fprintf(stderr, " [--max-lead-size <int>] [--max-lead-size <int>]\n");
     return -1;
   } else {
     return 0;
@@ -697,13 +724,16 @@ int main(int argc, char *argv[]) {
   DIM *max_pore_size = NULL;
   max_pore_size = malloc(sizeof(DIM));
   *max_pore_size = PORE_MAX_SIZE;
+  DIM *min_lead_size = NULL;
+  min_lead_size = malloc(sizeof(DIM));
+  *min_lead_size = LEAD_MIN_SIZE;
   DIM *max_lead_size = NULL;
   max_lead_size = malloc(sizeof(DIM));
   *max_lead_size = LEAD_MAX_SIZE;  
   // Parse command line arguments
   int args_error = parse_args(argc, argv, &datafile,
 			      &ds_source_name, &ds_dest_name_pores, &ds_dest_name_lead, 
-			      min_pore_size, max_pore_size, max_lead_size);
+			      min_pore_size, max_pore_size, min_lead_size, max_lead_size);
   if (args_error < 0) {
     return -1;
   }
@@ -713,6 +743,7 @@ int main(int argc, char *argv[]) {
   printf("Lead destination dataset: %s\n", ds_dest_name_lead);
   printf("Min pore size: %d\n", *min_pore_size);
   printf("Max pore size: %d\n", *max_pore_size);
+  printf("Min lead size: %d\n", *min_lead_size);
   printf("Max lead size: %d\n", *max_lead_size);
   if (*min_pore_size >= *max_pore_size) {
     printf("Error: Max pore size (%d) must be larger than min pore size (%d).\n",
@@ -751,8 +782,8 @@ int main(int argc, char *argv[]) {
   dst_ds_lead = tp_replace_dataset(ds_dest_name_lead, h5fp, src_space);
   // Apply the morpohology filters to extract the pore and lead structures
   char result_pores = 0, result_lead = 0;
-  result_pores = tp_extract_pores(src_ds, dst_ds_pores, h5fp, ds_dest_name_pores, *min_pore_size, *max_pore_size);
-  result_lead = tp_extract_lead(src_ds, dst_ds_lead, h5fp, ds_dest_name_lead, *max_lead_size);
+  /* result_pores = tp_extract_pores(src_ds, dst_ds_pores, h5fp, ds_dest_name_pores, *min_pore_size, *max_pore_size); */
+  result_lead = tp_extract_lead(src_ds, dst_ds_lead, h5fp, ds_dest_name_lead, *min_lead_size, *max_lead_size);
   // Close all the datasets, dataspaces, etc
   H5Dclose(src_ds);
   H5Dclose(dst_ds_pores);
