@@ -6,12 +6,16 @@
 #include <pthread.h>
 #include "tomopore.h"
 
-// Global constants
-#define PORE_MIN_SIZE 5
-#define PORE_MAX_SIZE 51
+// Global constants and default values
 #define RANK 3
 #define TRUE 1
 #define FALSE 0
+#define PORE_MIN_SIZE 5
+#define PORE_MAX_SIZE 51
+#define LEAD_MAX_SIZE 25
+#define SOURCE_NAME "volume"
+#define DEST_NAME_PORES "pores"
+#define DEST_NAME_LEAD "lead"
 
 /* Apply a series of filters to the volume using 3D kernels This is done */
 /* with a 3D kernel so that we don't lose data, but that means lots more */
@@ -543,6 +547,10 @@ char tp_apply_black_tophat(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 // Take a 3D volume of tomography data and isolate the pore structure using morphology filters
 char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, DIM min_pore_size, DIM max_pore_size) {
   printf("Starting pore extraction\n");
+  if (max_pore_size <= 1) {
+    printf("Skipping pores since max_pore_size <= 1\n");
+    return 0;
+  }
   // Create a kernel for the black tophat filters
   Matrix3D *kernelmax = tp_matrixmalloc(max_pore_size, max_pore_size, max_pore_size);
   tp_ellipsoid(kernelmax);
@@ -572,9 +580,27 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, D
 }
 
 
-int parse_args(int argc, char *argv[], char **ds_source_name,
-			char **ds_dest_name, char **datafile,
-			DIM *min_pore_size, DIM *max_pore_size)
+// Take a 3D volume of tomography data and isolate the lead structure using morphology filters
+char tp_extract_lead(hid_t volume_ds, hid_t lead_ds, hid_t h5fp, char *name, DIM max_lead_size) {
+  printf("Starting lead extraction\n");
+  // Create a kernel for the black tophat filters
+  Matrix3D *kernelmax = tp_matrixmalloc(max_lead_size, max_lead_size, max_lead_size);
+  tp_ellipsoid(kernelmax);
+
+  // Apply large black tophat filter
+  char result;
+  result = tp_apply_white_tophat(volume_ds, lead_ds, kernelmax);
+  
+  /* H5Dclose(temporary_ds2);  */
+  free(kernelmax);
+  return 0;
+}
+
+
+int parse_args
+(int argc, char *argv[], char **datafile,
+ char **ds_source_name, char **ds_dest_name_pores, char **ds_dest_name_lead,
+ DIM *min_pore_size, DIM *max_pore_size, DIM *max_lead_size)
 // Parse the command line arguments (*argc*, *argv*), and store the
 // results into the remaining pointers. Returns 0 if arguments are
 // valid, otherwise returns a negative number.
@@ -590,15 +616,24 @@ int parse_args(int argc, char *argv[], char **ds_source_name,
 	valid_args = 0;
 	break;
       }
-    } else if (strcmp(argv[argidx], "--dest") == 0) {
+    } else if (strcmp(argv[argidx], "--dest-pores") == 0) {
       if (argidx + 1 < argc) {
-	*ds_dest_name = (char *)realloc(*ds_dest_name, strlen(argv[argidx])*sizeof(char));
-	strcpy(*ds_dest_name, argv[argidx+1]);
+	*ds_dest_name_pores = (char *)realloc(*ds_dest_name_pores, strlen(argv[argidx])*sizeof(char));
+	strcpy(*ds_dest_name_pores, argv[argidx+1]);
 	argidx++; // Increment the counter to skip the argument's value
       } else {
 	valid_args = 0;
 	break;
       }
+    } else if (strcmp(argv[argidx], "--dest-lead") == 0) {
+      if (argidx + 1 < argc) {
+	*ds_dest_name_lead = (char *)realloc(*ds_dest_name_lead, strlen(argv[argidx])*sizeof(char));
+	strcpy(*ds_dest_name_lead, argv[argidx+1]);
+	argidx++; // Increment the counter to skip the argument's value
+      } else {
+	valid_args = 0;
+	break;
+      }      
     } else if (strcmp(argv[argidx], "--min-pore-size") == 0) {
       if (argidx + 1 < argc) {
 	*min_pore_size = atoi(argv[argidx+1]);
@@ -615,6 +650,14 @@ int parse_args(int argc, char *argv[], char **ds_source_name,
 	valid_args = 0;
 	break;
       }
+    } else if (strcmp(argv[argidx], "--max-lead-size") == 0) {
+      if (argidx + 1 < argc) {
+	*max_lead_size = atoi(argv[argidx+1]);
+	argidx++; // Increment the counter to skip the argument's value
+      } else {
+	valid_args = 0;
+	break;
+      }      
     } else if (strcmp(argv[argidx], "--help") == 0) {
       valid_args = 0;
     } else if (argv[argidx][0] == '-') {
@@ -629,7 +672,7 @@ int parse_args(int argc, char *argv[], char **ds_source_name,
     }
   }
   if (!valid_args) {
-    fprintf(stderr, "Usage: %s filename [--source <str>] [--dest <str>]",
+    fprintf(stderr, "Usage: %s filename [--source <str>] [--dest-pores <str>] [--dest-lead <str>]",
 	    argv[0]);
     fprintf(stderr, " [--max-pore-size <int>] [--min-pore-size <int>]\n");
     return -1;
@@ -642,9 +685,11 @@ int parse_args(int argc, char *argv[], char **ds_source_name,
 int main(int argc, char *argv[]) {
   // Default values
   char *ds_source_name = malloc(sizeof(char) * 7);
-  strcpy(ds_source_name, "volume");
-  char *ds_dest_name = malloc(sizeof(char) * 6);
-  strcpy(ds_dest_name, "pores");
+  strcpy(ds_source_name, SOURCE_NAME);
+  char *ds_dest_name_pores = malloc(sizeof(char) * 6);
+  strcpy(ds_dest_name_pores, DEST_NAME_PORES);
+  char *ds_dest_name_lead = malloc(sizeof(char) * 6);
+  strcpy(ds_dest_name_lead, DEST_NAME_LEAD);
   char *datafile;
   DIM *min_pore_size = NULL;
   min_pore_size = malloc(sizeof(DIM));
@@ -652,18 +697,23 @@ int main(int argc, char *argv[]) {
   DIM *max_pore_size = NULL;
   max_pore_size = malloc(sizeof(DIM));
   *max_pore_size = PORE_MAX_SIZE;
+  DIM *max_lead_size = NULL;
+  max_lead_size = malloc(sizeof(DIM));
+  *max_lead_size = LEAD_MAX_SIZE;  
   // Parse command line arguments
-  int args_error = parse_args(argc, argv,
-			      &ds_source_name, &ds_dest_name, &datafile,
-			      min_pore_size, max_pore_size);
+  int args_error = parse_args(argc, argv, &datafile,
+			      &ds_source_name, &ds_dest_name_pores, &ds_dest_name_lead, 
+			      min_pore_size, max_pore_size, max_lead_size);
   if (args_error < 0) {
     return -1;
   }
   printf("Filename: %s\n", datafile);
   printf("Source dataset: %s\n", ds_source_name);
-  printf("Destination dataset: %s\n", ds_dest_name);
+  printf("Pores destination dataset: %s\n", ds_dest_name_pores);
+  printf("Lead destination dataset: %s\n", ds_dest_name_lead);
   printf("Min pore size: %d\n", *min_pore_size);
   printf("Max pore size: %d\n", *max_pore_size);
+  printf("Max lead size: %d\n", *max_lead_size);
   if (*min_pore_size >= *max_pore_size) {
     printf("Error: Max pore size (%d) must be larger than min pore size (%d).\n",
 	   *max_pore_size, *min_pore_size);
@@ -685,7 +735,7 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "Error: Could not open file %s\n", datafile);
   }
   // Open the source datasets
-  hid_t src_ds, dst_ds;
+  hid_t src_ds, dst_ds_pores, dst_ds_lead;
   src_ds = H5Dopen(h5fp, ds_source_name, H5P_DEFAULT);
   if (src_ds < 0) {
     if (!H5Lexists(h5fp, ds_source_name, H5P_DEFAULT)) {
@@ -697,21 +747,28 @@ int main(int argc, char *argv[]) {
   }
   // Create a new destination dataset
   hid_t src_space = H5Dget_space(src_ds);
-  dst_ds = tp_replace_dataset(ds_dest_name, h5fp, src_space);
-  // Apply the morpohology filters to extract the pore structure
-  char result = 0;
-  result = tp_extract_pores(src_ds, dst_ds, h5fp, ds_dest_name, *min_pore_size, *max_pore_size);
+  dst_ds_pores = tp_replace_dataset(ds_dest_name_pores, h5fp, src_space);
+  dst_ds_lead = tp_replace_dataset(ds_dest_name_lead, h5fp, src_space);
+  // Apply the morpohology filters to extract the pore and lead structures
+  char result_pores = 0, result_lead = 0;
+  result_pores = tp_extract_pores(src_ds, dst_ds_pores, h5fp, ds_dest_name_pores, *min_pore_size, *max_pore_size);
+  result_lead = tp_extract_lead(src_ds, dst_ds_lead, h5fp, ds_dest_name_lead, *max_lead_size);
   // Close all the datasets, dataspaces, etc
   H5Dclose(src_ds);
-  H5Dclose(dst_ds);
+  H5Dclose(dst_ds_pores);
   H5Fclose(h5fp);
   // Check if the pore structure extraction finished successfully
-  if (result < 0) {
-    fprintf(stderr, "Failed to extract pores %s: %d\n", ds_source_name, result);
-    return -1;
+  char return_val = 0;
+  if (result_pores < 0) {
+    fprintf(stderr, "Failed to extract pores %s: %d\n", ds_source_name, result_pores);
+    return_val = -1;
+  }
+  if (result_lead < 0) {
+    fprintf(stderr, "Failed to extract lead %s: %d\n", ds_source_name, result_lead);
+    return_val = -1;
   }
   // TODO: Close the source and destination datasets
-  return 0;
+  return return_val;
 }
 
 
