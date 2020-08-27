@@ -548,10 +548,11 @@ char tp_apply_black_tophat(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 
 // Take a 3D volume of tomography data and isolate the pore structure using morphology filters
 char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, DIM min_pore_size, DIM max_pore_size) {
-  printf("Starting pore extraction\n");
   if (max_pore_size <= 1) {
-    printf("Skipping pores since max_pore_size <= 1\n");
+    printf("Skipping pore extraction since max_pore_size <= 1\n");
     return 0;
+  } else {
+    printf("Starting pore extraction\n");
   }
   // Create a kernel for the black tophat filters
   Matrix3D *kernelmax = tp_matrixmalloc(max_pore_size, max_pore_size, max_pore_size);
@@ -584,7 +585,12 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, D
 
 // Take a 3D volume of tomography data and isolate the lead structure using morphology filters
 char tp_extract_lead(hid_t volume_ds, hid_t lead_ds, hid_t h5fp, char *name, DIM min_lead_size, DIM max_lead_size) {
-  printf("Starting lead extraction\n");
+  if (max_lead_size <= 1) {
+    printf("Skipping free lead extraction since max_lead_size <= 1\n");
+    return 0;
+  } else {
+    printf("Starting free lead extraction\n");
+  }
   // Create a kernel for the black tophat filters
   Matrix3D *kernelmax = tp_matrixmalloc(max_lead_size, max_lead_size, max_lead_size);
   tp_ellipsoid(kernelmax);
@@ -612,6 +618,44 @@ char tp_extract_lead(hid_t volume_ds, hid_t lead_ds, hid_t h5fp, char *name, DIM
   free(kernelmin);
   return 0;
 
+}
+
+
+void print_usage(char *argv[]) {
+  fprintf(stderr, "Usage: %s filename [--source <str>] [--dest-pores <str>] [--dest-lead <str>]",
+	  argv[0]);
+  fprintf(stderr, " [--max-pore-size <int>] [--min-pore-size <int>]");
+  fprintf(stderr, " [--max-lead-size <int>] [--max-lead-size <int>]\n");
+}
+
+
+void print_help() {
+  fprintf(stderr, "\n");
+  fprintf(stderr,
+	  "Tomopore - Memory efficient 3D pore extraction.\n\n");
+  fprintf(stderr,
+	  "Parameters\n==========\n");
+  fprintf(stderr,
+	  "--source              Path to the dataset with the source data (default: %s)\n",
+	  SOURCE_NAME);
+  fprintf(stderr,
+	  "--dest-pores PATH     Path to the dataset to receive the segmented pores (default: %s)\n",
+	  DEST_NAME_PORES);
+  fprintf(stderr,
+	  "--dest-lead PATH      Path to the dataset to receive the segmented free lead (default: %s)\n",
+	  DEST_NAME_LEAD);
+  fprintf(stderr,
+	  "--min-pore-size SIZE  Lower bound for identifying pores (default: %d)\n",
+	  PORE_MIN_SIZE);
+  fprintf(stderr,
+	  "--max-pore-size SIZE  Upper bound for identifying pores (default: %d)\n",
+	  PORE_MAX_SIZE);
+  fprintf(stderr,
+	  "--min-lead-size SIZE  Lower bound for identifying free lead (default: %d)\n",
+	  LEAD_MIN_SIZE);
+  fprintf(stderr,
+	  "--max-lead-size SIZE  Upper bound for identifying free lead (default: %d)\n",
+	  LEAD_MAX_SIZE);
 }
 
 
@@ -684,8 +728,10 @@ int parse_args
 	valid_args = 0;
 	break;
       }      
-    } else if (strcmp(argv[argidx], "--help") == 0) {
-      valid_args = 0;
+    } else if ((strcmp(argv[argidx], "--help") & strcmp(argv[argidx], "-h")) == 0) {
+      print_usage(argv);
+      print_help();
+      exit(0);
     } else if (argv[argidx][0] == '-') {
       fprintf(stderr, "Error: Unknown argument '%s'\n\n", argv[argidx]);
       valid_args = 0;
@@ -698,10 +744,7 @@ int parse_args
     }
   }
   if (!valid_args) {
-    fprintf(stderr, "Usage: %s filename [--source <str>] [--dest-pores <str>] [--dest-lead <str>]",
-	    argv[0]);
-    fprintf(stderr, " [--max-pore-size <int>] [--min-pore-size <int>]");
-    fprintf(stderr, " [--max-lead-size <int>] [--max-lead-size <int>]\n");
+    print_usage(argv);
     return -1;
   } else {
     return 0;
