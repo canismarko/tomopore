@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include <argp.h>
 #include <sys/sysinfo.h>
+#include <time.h>
 
 #include "tomopore.h"
 
@@ -771,6 +772,9 @@ char tp_extract_lead(hid_t volume_ds, hid_t lead_ds, hid_t h5fp, char *name, DIM
 
 
 int main(int argc, char *argv[]) {
+  // Save start time to measure total execution
+  time_t start_time = time(NULL);
+  
   struct arguments arguments;
   /* Default option values. */
   arguments.min_pore_size = PORE_MIN_SIZE;
@@ -904,6 +908,12 @@ int main(int argc, char *argv[]) {
   // Close all the common datasets, dataspaces, etc
   H5Dclose(src_ds);
   H5Fclose(h5fp);
+
+  // Report the total amount of time used
+  if (!config.quiet) {
+    time_t end_time = time(NULL);
+    printf("\nFinished in %ld seconds.\n", end_time - start_time + 1);
+  }
   return return_val;
 }
 
