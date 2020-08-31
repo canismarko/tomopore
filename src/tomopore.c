@@ -4,6 +4,8 @@
 #include <math.h>
 #include <hdf5.h>
 #include <pthread.h>
+#include <argp.h>
+
 #include "tomopore.h"
 
 // Global constants and default values
@@ -17,6 +19,123 @@
 #define SOURCE_NAME "volume"
 #define DEST_NAME_PORES "pores"
 #define DEST_NAME_LEAD "lead"
+const char *argp_program_version =
+  "tomopore 0.1";
+const char *argp_program_bug_address =
+  "<wolfman@anl.gov>";
+
+// Program documentation
+static char doc[] =
+  "Tomopore -- Memory efficient 3D extraction of pores from tomography data";
+
+// A description of the arguments we accept
+static char args_doc[] =
+  "H5_FILE";
+
+// The options we understand
+/* static struct argp_option options[] = { */
+
+/* }; */
+
+#define OPT_MIN_PORE_SIZE 1
+#define OPT_MAX_PORE_SIZE 2
+#define OPT_MIN_LEAD_SIZE 3
+#define OPT_MAX_LEAD_SIZE 4
+#define OPT_DEST_PORES 5
+#define OPT_DEST_LEAD 6
+
+static struct argp_option options[] = {
+  {"min-pore-size", OPT_MIN_PORE_SIZE, "SIZE", 0, "Minimum size of pores (in pixels)"},
+  {"max-pore-size", OPT_MAX_PORE_SIZE, "SIZE", 0, "Maximum size of pores (in pixels)"},
+  {"min-lead-size", OPT_MIN_LEAD_SIZE, "SIZE", 0, "Minimum size of lead (in pixels)"},
+  {"max-lead-size", OPT_MAX_LEAD_SIZE, "SIZE", 0, "Maximum size of lead (in pixels)"},
+  {"source", 's', "DATASET", 0, "Path to the source dataset containing float volume data"},
+  {"dest-pores", OPT_DEST_PORES, "DATASET", 0, "Path to the dataset that will receive segmented pores"},
+  {"dest-lead", OPT_DEST_LEAD, "DATASET", 0, "Path to the dataset that will receive segmented free lead"},
+  /* {"verbose",  'v', 0,      0,  "Produce verbose output" }, */
+  /* {"quiet",    'q', 0,      0,  "Don't produce any output" }, */
+  /* {"silent",   's', 0,      OPTION_ALIAS }, */
+  /* {"output",   'o', "FILE", 0, */
+  /*  "Output to FILE instead of standard output" }, */
+  { 0 }
+};
+
+/* Used by main to communicate with parse_opt. */
+struct arguments
+{
+  /* char *args[2];                /\* arg1 & arg2 *\/ */
+  char *hdf_filename, *source, *dest_lead, *dest_pores;
+  DIM min_pore_size, max_pore_size, min_lead_size, max_lead_size;
+  /* int silent, verbose; */
+  /* char *output_file; */
+};
+
+/* Parse a single option. */
+static error_t
+parse_opt (int key, char *arg, struct argp_state *state)
+{
+  /* Get the input argument from argp_parse, which we
+     know is a pointer to our arguments structure. */
+  struct arguments *arguments = state->input;
+
+  switch (key)
+    {
+    /* case 'q': case 's': */
+    /*   arguments->silent = 1; */
+    /*   break; */
+    /* case 'v': */
+    /*   arguments->verbose = 1; */
+    /*   break; */
+    /* case 'o': */
+    /*   arguments->output_file = arg; */
+    /*   break; */
+    case OPT_MIN_PORE_SIZE:
+      arguments->min_pore_size = atoi(arg);
+      break;
+    case OPT_MAX_PORE_SIZE:
+      arguments->max_pore_size = atoi(arg);
+      break;
+    case OPT_MIN_LEAD_SIZE:
+      arguments->min_lead_size = atoi(arg);
+      break;
+    case OPT_MAX_LEAD_SIZE:
+      arguments->max_lead_size = atoi(arg);
+      break;
+    case 's':
+      arguments->source = arg;
+      break;
+    case OPT_DEST_PORES:
+      arguments->dest_pores = arg;
+      break;
+    case OPT_DEST_LEAD:
+      arguments->dest_lead = arg;
+      break;
+
+    case ARGP_KEY_ARG:
+      if (state->arg_num >= 1)
+        /* Too many arguments. */
+        argp_usage (state);
+
+      /* arguments->args[state->arg_num] = arg; */
+      arguments->hdf_filename = arg;
+
+      break;
+
+    case ARGP_KEY_END:
+      if (state->arg_num < 1)
+        /* Not enough arguments. */
+        argp_usage (state);
+      break;
+
+    default:
+      return ARGP_ERR_UNKNOWN;
+    }
+  return 0;
+}
+
+/* Our argp parser. */
+static struct argp argp = { options, parse_opt, args_doc, doc };
+
 
 /* Apply a series of filters to the volume using 3D kernels This is done */
 /* with a 3D kernel so that we don't lose data, but that means lots more */
@@ -562,7 +681,7 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, D
 
   // Prepare a temporary dataset to hold the intermediate data
   hid_t src_space = H5Dget_space(volume_ds);
-  hid_t temporary_ds = tp_replace_dataset(strcat(name, "_tomopore_temp"), h5fp, src_space);
+  hid_t temporary_ds = tp_replace_dataset(strcat(strdup(name), "_tomopore_temp"), h5fp, src_space);
 
   // Apply small black tophat filter
   char result;
@@ -599,7 +718,7 @@ char tp_extract_lead(hid_t volume_ds, hid_t lead_ds, hid_t h5fp, char *name, DIM
 
   // Prepare a temporary dataset to hold the intermediate data
   hid_t src_space = H5Dget_space(volume_ds);
-  hid_t temporary_ds = tp_replace_dataset(strcat(name, "_tomopore_temp"), h5fp, src_space);
+  hid_t temporary_ds = tp_replace_dataset(strcat(strdup(name), "_tomopore_temp"), h5fp, src_space);
 
   // Apply small black tophat filter
   char result;
@@ -613,7 +732,6 @@ char tp_extract_lead(hid_t volume_ds, hid_t lead_ds, hid_t h5fp, char *name, DIM
 
   // Free up memory and return
   H5Dclose(temporary_ds);
-  /* H5Dclose(temporary_ds2);  */
   free(kernelmax);
   free(kernelmin);
   return 0;
@@ -621,212 +739,72 @@ char tp_extract_lead(hid_t volume_ds, hid_t lead_ds, hid_t h5fp, char *name, DIM
 }
 
 
-void print_usage(char *argv[]) {
-  fprintf(stderr, "Usage: %s filename [--source <str>] [--dest-pores <str>] [--dest-lead <str>]",
-	  argv[0]);
-  fprintf(stderr, " [--max-pore-size <int>] [--min-pore-size <int>]");
-  fprintf(stderr, " [--max-lead-size <int>] [--max-lead-size <int>]\n");
-}
-
-
-void print_help() {
-  fprintf(stderr, "\n");
-  fprintf(stderr,
-	  "Tomopore - Memory efficient 3D pore extraction.\n\n");
-  fprintf(stderr,
-	  "Parameters\n==========\n");
-  fprintf(stderr,
-	  "--source              Path to the dataset with the source data (default: %s)\n",
-	  SOURCE_NAME);
-  fprintf(stderr,
-	  "--dest-pores PATH     Path to the dataset to receive the segmented pores (default: %s)\n",
-	  DEST_NAME_PORES);
-  fprintf(stderr,
-	  "--dest-lead PATH      Path to the dataset to receive the segmented free lead (default: %s)\n",
-	  DEST_NAME_LEAD);
-  fprintf(stderr,
-	  "--min-pore-size SIZE  Lower bound for identifying pores (default: %d)\n",
-	  PORE_MIN_SIZE);
-  fprintf(stderr,
-	  "--max-pore-size SIZE  Upper bound for identifying pores (default: %d)\n",
-	  PORE_MAX_SIZE);
-  fprintf(stderr,
-	  "--min-lead-size SIZE  Lower bound for identifying free lead (default: %d)\n",
-	  LEAD_MIN_SIZE);
-  fprintf(stderr,
-	  "--max-lead-size SIZE  Upper bound for identifying free lead (default: %d)\n",
-	  LEAD_MAX_SIZE);
-}
-
-
-int parse_args
-(int argc, char *argv[], char **datafile,
- char **ds_source_name, char **ds_dest_name_pores, char **ds_dest_name_lead,
- DIM *min_pore_size, DIM *max_pore_size, DIM *min_lead_size, DIM *max_lead_size)
-// Parse the command line arguments (*argc*, *argv*), and store the
-// results into the remaining pointers. Returns 0 if arguments are
-// valid, otherwise returns a negative number.
-{
-  unsigned int valid_args = 0;
-  for (int argidx=1; argidx < argc; argidx++) {
-    if (strcmp(argv[argidx], "--source") == 0) {
-      if (argidx + 1 < argc) {
-	*ds_source_name = (char *)realloc(*ds_source_name, strlen(argv[argidx])*sizeof(char));
-	strcpy(*ds_source_name, argv[argidx+1]);
-	argidx++; // Increment the counter to skip the argument's value
-      } else {
-	valid_args = 0;
-	break;
-      }
-    } else if (strcmp(argv[argidx], "--dest-pores") == 0) {
-      if (argidx + 1 < argc) {
-	*ds_dest_name_pores = (char *)realloc(*ds_dest_name_pores, strlen(argv[argidx])*sizeof(char));
-	strcpy(*ds_dest_name_pores, argv[argidx+1]);
-	argidx++; // Increment the counter to skip the argument's value
-      } else {
-	valid_args = 0;
-	break;
-      }
-    } else if (strcmp(argv[argidx], "--dest-lead") == 0) {
-      if (argidx + 1 < argc) {
-	*ds_dest_name_lead = (char *)realloc(*ds_dest_name_lead, strlen(argv[argidx])*sizeof(char));
-	strcpy(*ds_dest_name_lead, argv[argidx+1]);
-	argidx++; // Increment the counter to skip the argument's value
-      } else {
-	valid_args = 0;
-	break;
-      }      
-    } else if (strcmp(argv[argidx], "--min-pore-size") == 0) {
-      if (argidx + 1 < argc) {
-	*min_pore_size = atoi(argv[argidx+1]);
-	argidx++; // Increment the counter to skip the argument's value
-      } else {
-	valid_args = 0;
-	break;
-      }
-    } else if (strcmp(argv[argidx], "--max-pore-size") == 0) {
-      if (argidx + 1 < argc) {
-	*max_pore_size = atoi(argv[argidx+1]);
-	argidx++; // Increment the counter to skip the argument's value
-      } else {
-	valid_args = 0;
-	break;
-      }
-    } else if (strcmp(argv[argidx], "--min-lead-size") == 0) {
-      if (argidx + 1 < argc) {
-	*min_lead_size = atoi(argv[argidx+1]);
-	argidx++; // Increment the counter to skip the argument's value
-      } else {
-	valid_args = 0;
-	break;
-      }      
-    } else if (strcmp(argv[argidx], "--max-lead-size") == 0) {
-      if (argidx + 1 < argc) {
-	*max_lead_size = atoi(argv[argidx+1]);
-	argidx++; // Increment the counter to skip the argument's value
-      } else {
-	valid_args = 0;
-	break;
-      }      
-    } else if ((strcmp(argv[argidx], "--help") & strcmp(argv[argidx], "-h")) == 0) {
-      print_usage(argv);
-      print_help();
-      exit(0);
-    } else if (argv[argidx][0] == '-') {
-      fprintf(stderr, "Error: Unknown argument '%s'\n\n", argv[argidx]);
-      valid_args = 0;
-      break;
-    } else {
-      // Required argument with the filename
-      *datafile = (char *)malloc(strlen(argv[1])*sizeof(char));
-      strcpy(*datafile, argv[1]);
-      valid_args = 1;
-    }
-  }
-  if (!valid_args) {
-    print_usage(argv);
-    return -1;
-  } else {
-    return 0;
-  }
-}
-
 
 int main(int argc, char *argv[]) {
-  // Default values
-  char *ds_source_name = malloc(sizeof(char) * 7);
-  strcpy(ds_source_name, SOURCE_NAME);
-  char *ds_dest_name_pores = malloc(sizeof(char) * 6);
-  strcpy(ds_dest_name_pores, DEST_NAME_PORES);
-  char *ds_dest_name_lead = malloc(sizeof(char) * 6);
-  strcpy(ds_dest_name_lead, DEST_NAME_LEAD);
-  char *datafile;
-  DIM *min_pore_size = NULL;
-  min_pore_size = malloc(sizeof(DIM));
-  *min_pore_size = PORE_MIN_SIZE;
-  DIM *max_pore_size = NULL;
-  max_pore_size = malloc(sizeof(DIM));
-  *max_pore_size = PORE_MAX_SIZE;
-  DIM *min_lead_size = NULL;
-  min_lead_size = malloc(sizeof(DIM));
-  *min_lead_size = LEAD_MIN_SIZE;
-  DIM *max_lead_size = NULL;
-  max_lead_size = malloc(sizeof(DIM));
-  *max_lead_size = LEAD_MAX_SIZE;  
-  // Parse command line arguments
-  int args_error = parse_args(argc, argv, &datafile,
-			      &ds_source_name, &ds_dest_name_pores, &ds_dest_name_lead, 
-			      min_pore_size, max_pore_size, min_lead_size, max_lead_size);
-  if (args_error < 0) {
-    return -1;
-  }
-  printf("Filename: %s\n", datafile);
-  printf("Source dataset: %s\n", ds_source_name);
-  printf("Pores destination dataset: %s\n", ds_dest_name_pores);
-  printf("Lead destination dataset: %s\n", ds_dest_name_lead);
-  printf("Min pore size: %d\n", *min_pore_size);
-  printf("Max pore size: %d\n", *max_pore_size);
-  printf("Min lead size: %d\n", *min_lead_size);
-  printf("Max lead size: %d\n", *max_lead_size);
-  if (*min_pore_size >= *max_pore_size) {
+  struct arguments arguments;
+  /* Default values. */
+  arguments.min_pore_size = PORE_MIN_SIZE;
+  arguments.max_pore_size = PORE_MAX_SIZE;
+  arguments.min_lead_size = LEAD_MIN_SIZE;
+  arguments.max_lead_size = LEAD_MAX_SIZE;
+  arguments.source = SOURCE_NAME;
+  arguments.dest_pores = DEST_NAME_PORES;
+  arguments.dest_lead = DEST_NAME_LEAD;
+
+  /* Parse our arguments; every option seen by parse_opt will
+     be reflected in arguments. */
+  argp_parse (&argp, argc, argv, 0, 0, &arguments);
+
+  // Print the selected arguments
+  printf("Filename: %s\n", arguments.hdf_filename);
+  printf("Source dataset: %s\n", arguments.source);
+  printf("Pores destination dataset: %s\n", arguments.dest_pores);
+  printf("Lead destination dataset: %s\n", arguments.dest_lead);
+  printf("Min pore size: %d\n", arguments.min_pore_size);
+  printf("Max pore size: %d\n", arguments.max_pore_size);
+  printf("Min lead size: %d\n", arguments.min_lead_size);
+  printf("Max lead size: %d\n", arguments.max_lead_size);
+  if (arguments.min_pore_size >= arguments.max_pore_size) {
     printf("Error: Max pore size (%d) must be larger than min pore size (%d).\n",
-	   *max_pore_size, *min_pore_size);
+	   arguments.max_pore_size, arguments.min_pore_size);
     return -1;
   }
   // Check that kernel sizes are odd
-  if (!(*min_pore_size % 2)) {
-    printf("Warning: Min pore size (%d) should be an odd number.\n", *min_pore_size);
+  if (!(arguments.min_pore_size % 2)) {
+    printf("Warning: Min pore size (%d) should be an odd number.\n", arguments.min_pore_size);
   }
-  if (!(*max_pore_size % 2)) {
-    printf("Warning: Max pore size (%d) should be an odd number.\n", *max_pore_size);
+  if (!(arguments.max_pore_size % 2)) {
+    printf("Warning: Max pore size (%d) should be an odd number.\n", arguments.max_pore_size);
   }
   // Open the HDF5 file
-  hid_t h5fp = H5Fopen(datafile, // File name to be opened
+  hid_t h5fp = H5Fopen(arguments.hdf_filename, // File name to be opened
 		       H5F_ACC_RDWR,        // file access mode
 		       H5P_DEFAULT          // file access properties list
 		       );
   if (h5fp < 0) {
-    fprintf(stderr, "Error: Could not open file %s\n", datafile);
+    fprintf(stderr, "Error: Could not open file %s\n", arguments.hdf_filename);
   }
   // Open the source datasets
   hid_t src_ds, dst_ds_pores, dst_ds_lead;
-  src_ds = H5Dopen(h5fp, ds_source_name, H5P_DEFAULT);
+  src_ds = H5Dopen(h5fp, arguments.source, H5P_DEFAULT);
   if (src_ds < 0) {
-    if (!H5Lexists(h5fp, ds_source_name, H5P_DEFAULT)) {
-      fprintf(stderr, "Source dataset '%s' not found.\n", ds_source_name);
+    if (!H5Lexists(h5fp, arguments.source, H5P_DEFAULT)) {
+      fprintf(stderr, "Source dataset '%s' not found.\n", arguments.source);
     } else {
-      fprintf(stderr, "Error opening source dataset '%s': %ld\n", ds_source_name, src_ds);
+      fprintf(stderr, "Error opening source dataset '%s': %ld\n", arguments.source, src_ds);
     }
     return -1;
   }
   // Create a new destination dataset
   hid_t src_space = H5Dget_space(src_ds);
-  dst_ds_pores = tp_replace_dataset(ds_dest_name_pores, h5fp, src_space);
-  dst_ds_lead = tp_replace_dataset(ds_dest_name_lead, h5fp, src_space);
+  dst_ds_pores = tp_replace_dataset(arguments.dest_pores, h5fp, src_space);
+  dst_ds_lead = tp_replace_dataset(arguments.dest_lead, h5fp, src_space);
   // Apply the morpohology filters to extract the pore and lead structures
   char result_pores = 0, result_lead = 0;
-  /* result_pores = tp_extract_pores(src_ds, dst_ds_pores, h5fp, ds_dest_name_pores, *min_pore_size, *max_pore_size); */
-  result_lead = tp_extract_lead(src_ds, dst_ds_lead, h5fp, ds_dest_name_lead, *min_lead_size, *max_lead_size);
+  result_pores = tp_extract_pores(src_ds, dst_ds_pores, h5fp, arguments.dest_pores,
+				  arguments.min_pore_size, arguments.max_pore_size);
+  result_lead = tp_extract_lead(src_ds, dst_ds_lead, h5fp, arguments.dest_lead,
+				arguments.min_lead_size, arguments.max_lead_size);
   // Close all the datasets, dataspaces, etc
   H5Dclose(src_ds);
   H5Dclose(dst_ds_pores);
@@ -834,11 +812,11 @@ int main(int argc, char *argv[]) {
   // Check if the pore structure extraction finished successfully
   char return_val = 0;
   if (result_pores < 0) {
-    fprintf(stderr, "Failed to extract pores %s: %d\n", ds_source_name, result_pores);
+    fprintf(stderr, "Failed to extract pores %s: %d\n", arguments.source, result_pores);
     return_val = -1;
   }
   if (result_lead < 0) {
-    fprintf(stderr, "Failed to extract lead %s: %d\n", ds_source_name, result_lead);
+    fprintf(stderr, "Failed to extract lead %s: %d\n", arguments.source, result_lead);
     return_val = -1;
   }
   // TODO: Close the source and destination datasets
@@ -875,16 +853,6 @@ void tp_normalize_kernel(Matrix3D *kernel) {
     }
   }
 }
-
-
-// Determine how many iterations exist in an array along the given dimension
-// Eg. ``tp_num_iters(arr, 1)`` on a (16, 32, 64) array will return 32
-/* uint16_t tp_num_iters(float *arr, uint16_t dimension) { */
-/*   while (dimension > 0) { */
-/*     arr = &arr[0]; */
-/*   } */
-/*   return sizeof(arr) / sizeof(arr[0]); */
-/* } */
 
 
 // Take a kernel of given dimensions and make it an ellipsoid of 1's surrounded by zeroes
