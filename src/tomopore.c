@@ -5,6 +5,7 @@
 #include <hdf5.h>
 #include <pthread.h>
 #include <argp.h>
+#include <sys/sysinfo.h>
 
 #include "tomopore.h"
 
@@ -32,10 +33,10 @@ static char doc[] =
 static char args_doc[] =
   "H5_FILE";
 
-// The options we understand
-/* static struct argp_option options[] = { */
-
-/* }; */
+// Global variables
+static struct {
+  int n_threads, verbose, quiet;
+} config;
 
 #define OPT_MIN_PORE_SIZE 1
 #define OPT_MAX_PORE_SIZE 2
@@ -45,29 +46,28 @@ static char args_doc[] =
 #define OPT_DEST_LEAD 6
 
 static struct argp_option options[] = {
-  {"min-pore-size", OPT_MIN_PORE_SIZE, "SIZE", 0, "Minimum size of pores (in pixels)"},
-  {"max-pore-size", OPT_MAX_PORE_SIZE, "SIZE", 0, "Maximum size of pores (in pixels)"},
-  {"min-lead-size", OPT_MIN_LEAD_SIZE, "SIZE", 0, "Minimum size of lead (in pixels)"},
-  {"max-lead-size", OPT_MAX_LEAD_SIZE, "SIZE", 0, "Maximum size of lead (in pixels)"},
-  {"source", 's', "DATASET", 0, "Path to the source dataset containing float volume data"},
-  {"dest-pores", OPT_DEST_PORES, "DATASET", 0, "Path to the dataset that will receive segmented pores"},
-  {"dest-lead", OPT_DEST_LEAD, "DATASET", 0, "Path to the dataset that will receive segmented free lead"},
-  /* {"verbose",  'v', 0,      0,  "Produce verbose output" }, */
-  /* {"quiet",    'q', 0,      0,  "Don't produce any output" }, */
-  /* {"silent",   's', 0,      OPTION_ALIAS }, */
-  /* {"output",   'o', "FILE", 0, */
-  /*  "Output to FILE instead of standard output" }, */
+  {"threads", 'j', "NUM_THREADS", 0, "Number of parallel threads, defaults to using all cores", 0},
+  {"verbose",  'v', 0,      0,  "Produce verbose output", 0},
+  {"quiet",    'q', 0,      0,  "Don't produce any output", 0},
+  
+  {"source", 's', "DATASET", 0, "Path to the source dataset containing float volume data", 1},
+  {"dest-pores", OPT_DEST_PORES, "DATASET", 0, "Path to the dataset that will receive segmented pores", 1},
+  {"dest-lead", OPT_DEST_LEAD, "DATASET", 0, "Path to the dataset that will receive segmented free lead", 1},  
+
+  {"min-pore-size", OPT_MIN_PORE_SIZE, "SIZE", 0, "Minimum size of pores (in pixels)", 2},
+  {"max-pore-size", OPT_MAX_PORE_SIZE, "SIZE", 0, "Maximum size of pores (in pixels)", 2},
+  {"min-lead-size", OPT_MIN_LEAD_SIZE, "SIZE", 0, "Minimum size of lead (in pixels)", 2},
+  {"max-lead-size", OPT_MAX_LEAD_SIZE, "SIZE", 0, "Maximum size of lead (in pixels)", 2},
+  
   { 0 }
 };
 
 /* Used by main to communicate with parse_opt. */
 struct arguments
 {
-  /* char *args[2];                /\* arg1 & arg2 *\/ */
   char *hdf_filename, *source, *dest_lead, *dest_pores;
   DIM min_pore_size, max_pore_size, min_lead_size, max_lead_size;
-  /* int silent, verbose; */
-  /* char *output_file; */
+  int n_threads, quiet, verbose;
 };
 
 /* Parse a single option. */
@@ -80,33 +80,42 @@ parse_opt (int key, char *arg, struct argp_state *state)
 
   switch (key)
     {
-    /* case 'q': case 's': */
-    /*   arguments->silent = 1; */
-    /*   break; */
-    /* case 'v': */
-    /*   arguments->verbose = 1; */
-    /*   break; */
-    /* case 'o': */
-    /*   arguments->output_file = arg; */
-    /*   break; */
+    case 'j':
+      arguments->n_threads = atoi(arg);
+      break;
+
+    case 'q':
+      arguments->quiet = TRUE;
+      break;
+
+    case 'v':
+      arguments->verbose = TRUE;
+      break;      
+
     case OPT_MIN_PORE_SIZE:
       arguments->min_pore_size = atoi(arg);
       break;
+
     case OPT_MAX_PORE_SIZE:
       arguments->max_pore_size = atoi(arg);
       break;
+
     case OPT_MIN_LEAD_SIZE:
       arguments->min_lead_size = atoi(arg);
       break;
+
     case OPT_MAX_LEAD_SIZE:
       arguments->max_lead_size = atoi(arg);
       break;
+
     case 's':
       arguments->source = arg;
       break;
+
     case OPT_DEST_PORES:
       arguments->dest_pores = arg;
       break;
+
     case OPT_DEST_LEAD:
       arguments->dest_lead = arg;
       break;
@@ -115,10 +124,7 @@ parse_opt (int key, char *arg, struct argp_state *state)
       if (state->arg_num >= 1)
         /* Too many arguments. */
         argp_usage (state);
-
-      /* arguments->args[state->arg_num] = arg; */
       arguments->hdf_filename = arg;
-
       break;
 
     case ARGP_KEY_END:
@@ -149,7 +155,8 @@ hid_t tp_replace_dataset
   hid_t new_dataset_id;
   if (H5Lexists(h5fp, dataset_name, H5P_DEFAULT)) {
     // Unlink the old dataset
-    printf("Removing existing dataset: %s\n", dataset_name);
+    if (config.verbose)
+      printf("Removing existing dataset: %s\n", dataset_name);
     herr_t error = H5Ldelete(h5fp,         // loc_id
 			     dataset_name, // *name
 			     H5P_DEFAULT   // access property list
@@ -170,7 +177,8 @@ hid_t tp_require_dataset
     new_dataset_id = H5Dopen(h5fp, dataset_name, H5P_DEFAULT);
   } else {
     // Create new dataset if it didn't already exist
-    printf("Creating new dataset: %s\n", dataset_name);
+    if (config.verbose)
+      printf("Creating new dataset: %s\n", dataset_name);
     new_dataset_id = H5Dcreate(h5fp,             // loc_id
 		       dataset_name,      // name
 		       H5T_NATIVE_FLOAT, // Datatype identifier
@@ -190,6 +198,8 @@ hid_t tp_require_dataset
 
 void print_progress(DIM current, DIM total, char desc[])
 {
+  if (config.quiet)
+    return;
   float ratio = ((float) current / (float) total);
   // Prepare a progress bar
   char bar_length = 30;
@@ -404,12 +414,11 @@ char tp_apply_filter
     /* 							   op); */
     /*   } */
     /* } */
-    DIM n_threads = 16;
-    DIM rows_per_thread = (DIM) ceil((double) n_rows / (double) n_threads);
+    DIM rows_per_thread = (DIM) ceil((double) n_rows / (double) config.n_threads);
     DIM next_row = 0;
-    pthread_t tids[n_threads];
+    pthread_t tids[config.n_threads];
     ThreadPayload *payload;
-    for (DIM tidx=0; tidx < n_threads; tidx++) {
+    for (DIM tidx=0; tidx < config.n_threads; tidx++) {
       /* for (DIM irow=0; irow < n_rows; irow++) { */
       if (next_row < n_rows) {
 	payload = malloc(sizeof(ThreadPayload));
@@ -428,7 +437,7 @@ char tp_apply_filter
       }
     }
     // Wait for threads to finish
-    for (pthread_t tidx=0; tidx < n_threads; tidx++) {
+    for (pthread_t tidx=0; tidx < config.n_threads; tidx++) {
       if (tids[tidx] > 0) {
 	pthread_join(tids[tidx], NULL);
       }
@@ -570,20 +579,23 @@ char tp_subtract_datasets(hid_t src_ds1, hid_t src_ds2, hid_t dest_ds)
       fprintf(stderr, "Failed to write dataset: %d\n", error);
       return -1;
     }
-    print_progress(islc, shape[0]-1, "Subtracting");
+    if (config.verbose)
+      print_progress(islc, shape[0]-1, "Subtracting");
   }
 }
 
 
 char tp_apply_erosion(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 {
-  printf("Applying erosion filter: (%d, %d, %d) kernel.\n", kernel->nslices, kernel->nrows, kernel->ncolumns);
+  if (config.verbose)
+    printf("Applying erosion filter: (%d, %d, %d) kernel.\n", kernel->nslices, kernel->nrows, kernel->ncolumns);
   return tp_apply_filter(src_ds, dest_ds, kernel, Min);
 }
 
 char tp_apply_dilation(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 {
-  printf("Applying dilation filter: (%d, %d, %d) kernel.\n", kernel->nslices, kernel->nrows, kernel->ncolumns);
+  if (config.verbose)
+    printf("Applying dilation filter: (%d, %d, %d) kernel.\n", kernel->nslices, kernel->nrows, kernel->ncolumns);
   return tp_apply_filter(src_ds, dest_ds, kernel, Max);
 }
 
@@ -668,10 +680,13 @@ char tp_apply_black_tophat(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 // Take a 3D volume of tomography data and isolate the pore structure using morphology filters
 char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, DIM min_pore_size, DIM max_pore_size) {
   if (max_pore_size <= 1) {
-    printf("Skipping pore extraction since max_pore_size <= 1\n");
+    if (!config.quiet)
+      printf("Skipping pore extraction since max_pore_size <= 1\n");
     return 0;
   } else {
-    printf("Starting pore extraction\n");
+    if (!config.quiet)
+    printf("\nPore extraction (4 passes)\n"
+	   "==========================\n");
   }
   // Create a kernel for the black tophat filters
   Matrix3D *kernelmax = tp_matrixmalloc(max_pore_size, max_pore_size, max_pore_size);
@@ -705,10 +720,13 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, D
 // Take a 3D volume of tomography data and isolate the lead structure using morphology filters
 char tp_extract_lead(hid_t volume_ds, hid_t lead_ds, hid_t h5fp, char *name, DIM min_lead_size, DIM max_lead_size) {
   if (max_lead_size <= 1) {
-    printf("Skipping free lead extraction since max_lead_size <= 1\n");
+    if (!config.quiet)
+      printf("Skipping free lead extraction since max_lead_size <= 1\n");
     return 0;
   } else {
-    printf("Starting free lead extraction\n");
+    if (!config.quiet)
+      printf("\nFree lead extraction (4 passes)\n"
+	     "===============================\n");
   }
   // Create a kernel for the black tophat filters
   Matrix3D *kernelmax = tp_matrixmalloc(max_lead_size, max_lead_size, max_lead_size);
@@ -742,11 +760,14 @@ char tp_extract_lead(hid_t volume_ds, hid_t lead_ds, hid_t h5fp, char *name, DIM
 
 int main(int argc, char *argv[]) {
   struct arguments arguments;
-  /* Default values. */
+  /* Default option values. */
   arguments.min_pore_size = PORE_MIN_SIZE;
   arguments.max_pore_size = PORE_MAX_SIZE;
   arguments.min_lead_size = LEAD_MIN_SIZE;
   arguments.max_lead_size = LEAD_MAX_SIZE;
+  arguments.n_threads = get_nprocs() * 2;
+  arguments.quiet = FALSE;
+  arguments.verbose = FALSE;
   arguments.source = SOURCE_NAME;
   arguments.dest_pores = DEST_NAME_PORES;
   arguments.dest_lead = DEST_NAME_LEAD;
@@ -755,27 +776,48 @@ int main(int argc, char *argv[]) {
      be reflected in arguments. */
   argp_parse (&argp, argc, argv, 0, 0, &arguments);
 
+  // Apply global options to the global variables
+  config.n_threads = arguments.n_threads;
+  config.quiet = arguments.quiet;
+  config.verbose = arguments.verbose;
+
   // Print the selected arguments
-  printf("Filename: %s\n", arguments.hdf_filename);
-  printf("Source dataset: %s\n", arguments.source);
-  printf("Pores destination dataset: %s\n", arguments.dest_pores);
-  printf("Lead destination dataset: %s\n", arguments.dest_lead);
-  printf("Min pore size: %d\n", arguments.min_pore_size);
-  printf("Max pore size: %d\n", arguments.max_pore_size);
-  printf("Min lead size: %d\n", arguments.min_lead_size);
-  printf("Max lead size: %d\n", arguments.max_lead_size);
+  if (!config.quiet) {
+    printf("Filename: %s\n", arguments.hdf_filename);
+    if (config.verbose) {
+      printf("Number of threads: %d\n", config.n_threads);
+      printf("Quiet: %d\n", config.quiet);
+      printf("Verbose: %d\n", config.verbose);
+    }
+    printf("Source dataset: %s\n", arguments.source);
+    printf("Pores destination dataset: %s\n", arguments.dest_pores);
+    printf("Lead destination dataset: %s\n", arguments.dest_lead);
+    printf("Min pore size: %d\n", arguments.min_pore_size);
+    printf("Max pore size: %d\n", arguments.max_pore_size);
+    printf("Min lead size: %d\n", arguments.min_lead_size);
+    printf("Max lead size: %d\n", arguments.max_lead_size);
+  }
+
+  // Validate the supplied options
   if (arguments.min_pore_size >= arguments.max_pore_size) {
     printf("Error: Max pore size (%d) must be larger than min pore size (%d).\n",
 	   arguments.max_pore_size, arguments.min_pore_size);
     return -1;
   }
+  if (arguments.min_lead_size >= arguments.max_lead_size) {
+    printf("Error: Max lead size (%d) must be larger than min lead size (%d).\n",
+	   arguments.max_lead_size, arguments.min_lead_size);
+    return -1;
+  }
   // Check that kernel sizes are odd
-  if (!(arguments.min_pore_size % 2)) {
+  if (!(arguments.min_pore_size % 2) && (!config.quiet))
     printf("Warning: Min pore size (%d) should be an odd number.\n", arguments.min_pore_size);
-  }
-  if (!(arguments.max_pore_size % 2)) {
+  if (!(arguments.max_pore_size % 2) && (!config.quiet))
     printf("Warning: Max pore size (%d) should be an odd number.\n", arguments.max_pore_size);
-  }
+  if (!(arguments.min_lead_size % 2) && (!config.quiet))
+    printf("Warning: Min lead size (%d) should be an odd number.\n", arguments.min_lead_size);
+  if (!(arguments.max_lead_size % 2) && (!config.quiet))
+    printf("Warning: Max lead size (%d) should be an odd number.\n", arguments.max_lead_size);
   // Open the HDF5 file
   hid_t h5fp = H5Fopen(arguments.hdf_filename, // File name to be opened
 		       H5F_ACC_RDWR,        // file access mode
