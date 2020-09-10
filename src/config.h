@@ -15,6 +15,6 @@ extern Config config
 #endif
 
 #ifndef TP_CONFIG_EXTERN
-Config config;
 #define TP_CONFIG_EXTERN
+Config config;
 #endif
