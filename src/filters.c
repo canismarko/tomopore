@@ -428,6 +428,7 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, D
     printf("\nPore extraction (4 passes)\n"
 	   "==========================\n");
   }
+
   // Create a kernel for the black tophat filters
   Matrix3D *kernelmax = tp_matrixmalloc(max_pore_size, max_pore_size, max_pore_size);
   tp_ellipsoid(kernelmax);
@@ -436,17 +437,24 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, D
 
   // Prepare a temporary dataset to hold the intermediate data
   hid_t src_space = H5Dget_space(volume_ds);
-  hid_t temporary_ds = tp_replace_dataset(strcat(strdup(name), "_tomopore_temp"), h5fp, src_space);
+  hid_t src_type = H5Dget_type(volume_ds);
+  hid_t temporary_ds = tp_replace_dataset(strcat(strdup(name), "_tomopore_temp"), h5fp, src_space, src_type);
 
   // Apply small black tophat filter
   char result;
-  result = tp_apply_black_tophat(volume_ds, temporary_ds, kernelmin);
+  if (min_pore_size > 0) {
+    // A minimum pore size was requested, so do it in multiple steps
+    result = tp_apply_black_tophat(volume_ds, temporary_ds, kernelmin);
   
-  // Apply large black tophat filter
-  result = tp_apply_black_tophat(volume_ds, pores_ds, kernelmax);
+    // Apply large black tophat filter
+    result = tp_apply_black_tophat(volume_ds, pores_ds, kernelmax);
   
-  // Subtract the two
-  result = tp_subtract_datasets(pores_ds, temporary_ds, pores_ds);
+    // Subtract the two
+    result = tp_subtract_datasets(pores_ds, temporary_ds, pores_ds);
+  } else {
+    // No minimum pore size, so single-step extraction
+    result = tp_apply_black_tophat(volume_ds, pores_ds, kernelmax);
+  }
 
   // Free up memory and return
   H5Dclose(temporary_ds);
@@ -476,7 +484,8 @@ char tp_extract_lead(hid_t volume_ds, hid_t lead_ds, hid_t h5fp, char *name, DIM
 
   // Prepare a temporary dataset to hold the intermediate data
   hid_t src_space = H5Dget_space(volume_ds);
-  hid_t temporary_ds = tp_replace_dataset(strcat(strdup(name), "_tomopore_temp"), h5fp, src_space);
+  hid_t src_type = H5Dget_type(volume_ds);
+  hid_t temporary_ds = tp_replace_dataset(strcat(strdup(name), "_tomopore_temp"), h5fp, src_space, src_type);
 
   // Apply small black tophat filter
   char result;

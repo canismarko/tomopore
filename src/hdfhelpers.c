@@ -2,7 +2,7 @@
 #include "config.h"
 
 hid_t tp_replace_dataset
-(char *dataset_name, hid_t h5fp, hid_t dataspace)
+(char *dataset_name, hid_t h5fp, hid_t dataspace, hid_t datatype)
 // Replace an existing dataset with a new one specified in *dataspace*
 {
   hid_t new_dataset_id;
@@ -16,13 +16,13 @@ hid_t tp_replace_dataset
 			     );
   }
   // Now create a new dataset
-  new_dataset_id = tp_require_dataset(dataset_name, h5fp, dataspace);
+  new_dataset_id = tp_require_dataset(dataset_name, h5fp, dataspace, datatype);
   return new_dataset_id;
 }
 
 
 hid_t tp_require_dataset
-(char *dataset_name, hid_t h5fp, hid_t dataspace)
+(char *dataset_name, hid_t h5fp, hid_t dataspace, hid_t datatype)
 // Open an existing dataset, or create a new one if one doesn't exist
 {
   hid_t new_dataset_id;
@@ -35,7 +35,7 @@ hid_t tp_require_dataset
       printf("Creating new dataset: %s\n", dataset_name);
     new_dataset_id = H5Dcreate(h5fp,             // loc_id
 		       dataset_name,      // name
-		       H5T_NATIVE_FLOAT, // Datatype identifier
+		       datatype, // Datatype identifier
 		       dataspace,        // Dataspace identifier
 		       H5P_DEFAULT,      // Link property list
 		       H5P_DEFAULT,      // Creation property list

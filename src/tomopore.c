@@ -258,14 +258,90 @@ int main(int argc, char *argv[]) {
     return -1;
   }
   hid_t src_space = H5Dget_space(src_ds);
-  
+  hid_t src_type = H5Dget_type(src_ds);
+
+  // Validate the input datatype
+  size_t sz = H5Tget_size(src_type);;
+  switch (H5Tget_class(src_type)) {
+  case H5T_INTEGER:
+    if (config.verbose) {
+      printf("Input datatype: ");
+      // Determine signed vs unsigned
+      H5T_sign_t sgn = H5Tget_sign(src_type);
+      switch (sgn) {
+      case H5T_SGN_NONE:
+	printf("u");
+	break;
+      }
+      // Print integer bit depth
+      printf("int%d ", (int) (sz * sizeof(H5T_NATIVE_INT)));
+      // Print endianism
+      H5T_order_t ord = H5Tget_order(src_type);
+      switch (ord) {
+      case H5T_ORDER_LE:
+	printf("(LE)");
+	break;
+      case H5T_ORDER_BE:
+	printf("(BE)");
+	break;
+      }
+      printf("\n");
+    }
+    if (!config.quiet) {
+      printf("Warning: Possible precision loss converting integers on disk to floats in memory.\n");
+    }
+    break;
+  case H5T_FLOAT:
+    if (config.verbose) {
+      printf("Input datatype: float%d\n", (int) (sz * sizeof(H5T_NATIVE_INT)));
+    }
+    break;
+  case H5T_STRING:
+    printf("Error: cannot segment datatype H5T_STRING\n");
+    exit(-1);
+    break;
+  case H5T_BITFIELD:
+    printf("Error: cannot segment datatype H5T_BITFIELD\n");
+    exit(-1);
+    break;
+  case H5T_OPAQUE:
+    printf("Error: cannot segment datatype H5T_OPAQUE\n");
+    exit(-1);
+    break;
+  case H5T_COMPOUND:
+    printf("Error: cannot segment datatype H5T_COMPOUND\n");
+    exit(-1);
+    break;
+  case H5T_REFERENCE:
+    printf("Error: cannot segment datatype H5T_REFERENCE\n");
+    exit(-1);
+    break;
+  case H5T_ENUM:
+    printf("Error: cannot segment datatype H5T_ENUM\n");
+    exit(-1);
+    break;
+  case H5T_VLEN:
+    printf("Error: cannot segment datatype H5T_VLEN\n");
+    exit(-1);
+    break;
+  case H5T_ARRAY:
+    printf("Error: cannot segment datatype H5T_ARRAY\n");
+    exit(-1);
+    break;
+  default:
+    printf("Error: unknown datatype %ld\n", src_type);
+    exit(-1);
+    break;
+  }
+
+
   // Prepare and segment the pores
   char return_val = 0;
   if (!arguments.no_pores) {
     hid_t dst_ds_pores;
     char result_pores = 0;
     // Create a new destination dataset
-    dst_ds_pores = tp_replace_dataset(arguments.dest_pores, h5fp, src_space);
+    dst_ds_pores = tp_replace_dataset(arguments.dest_pores, h5fp, src_space, src_type);
     // Apply the morpohology filters to extract the pore and lead structures
     result_pores = tp_extract_pores(src_ds, dst_ds_pores, h5fp, arguments.dest_pores,
 				    arguments.min_pore_size, arguments.max_pore_size);
@@ -281,7 +357,7 @@ int main(int argc, char *argv[]) {
     hid_t dst_ds_lead;
     char result_lead = 0;
     // Create a new destination dataset
-    dst_ds_lead = tp_replace_dataset(arguments.dest_lead, h5fp, src_space);
+    dst_ds_lead = tp_replace_dataset(arguments.dest_lead, h5fp, src_space, src_type);
     // Apply the morpohology filters to extract the pore and lead structures
     result_lead = tp_extract_lead(src_ds, dst_ds_lead, h5fp, arguments.dest_lead,
 				  arguments.min_lead_size, arguments.max_lead_size);
