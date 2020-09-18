@@ -1,7 +1,8 @@
 # GCC for debugging
-# CC=gcc -g -pg
+# OPTIMIZATIONS=-g -pg
 # GCC for deployment
-CC=gcc -O2
+OPTIMIZATIONS=-O2
+CC=g++ $(OPTIMIZATIONS) -std=c++17
 LINK=-lhdf5 -lm -lpthread
 INSTALLDIR=$(HOME)/bin
 

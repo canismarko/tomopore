@@ -24,6 +24,7 @@ const char *SOURCE_NAME = "volume";
 const char *DEST_NAME_PORES = "pores";
 const char *DEST_NAME_LEAD = "lead";
 
+
 // Documentation for the ``--help`` argument
 const char *argp_program_version =
   "tomopore 0.1";
@@ -84,7 +85,7 @@ parse_opt (int key, char *arg, struct argp_state *state)
 {
   /* Get the input argument from argp_parse, which we
      know is a pointer to our arguments structure. */
-  struct arguments *arguments = state->input;
+  struct arguments *arguments = (struct arguments *) state->input;
 
   switch (key)
     {
@@ -200,13 +201,13 @@ int main(int argc, char *argv[]) {
     printf("Source dataset: %s\n", arguments.source);
     if ((!arguments.no_pores) || config.verbose) {
       printf("Pores destination dataset: %s\n", arguments.dest_pores);
-      printf("Min pore size: %d\n", arguments.min_pore_size);
-      printf("Max pore size: %d\n", arguments.max_pore_size);
+      printf("Min pore size: %lu\n", arguments.min_pore_size);
+      printf("Max pore size: %lu\n", arguments.max_pore_size);
     }
     if ((!arguments.no_lead) || config.verbose) {
       printf("Lead destination dataset: %s\n", arguments.dest_lead);
-      printf("Min lead size: %d\n", arguments.min_lead_size);
-      printf("Max lead size: %d\n", arguments.max_lead_size);
+      printf("Min lead size: %lu\n", arguments.min_lead_size);
+      printf("Max lead size: %lu\n", arguments.max_lead_size);
     }
   }
 
@@ -214,28 +215,28 @@ int main(int argc, char *argv[]) {
   if (!arguments.no_pores) {
     // Make sure min and max sizes are in the right order
     if (arguments.min_pore_size >= arguments.max_pore_size) {
-      printf("Error: Max pore size (%d) must be larger than min pore size (%d).\n",
+      printf("Error: Max pore size (%ld) must be larger than min pore size (%lu).\n",
 	     arguments.max_pore_size, arguments.min_pore_size);
       return -1;
     }
     // Check that kernel sizes are odd
     if (!(arguments.min_pore_size % 2) && (!config.quiet))
-      printf("Warning: Min pore size (%d) should be an odd number.\n", arguments.min_pore_size);
+      printf("Warning: Min pore size (%lu) should be an odd number.\n", arguments.min_pore_size);
     if (!(arguments.max_pore_size % 2) && (!config.quiet))
-      printf("Warning: Max pore size (%d) should be an odd number.\n", arguments.max_pore_size);
+      printf("Warning: Max pore size (%lu) should be an odd number.\n", arguments.max_pore_size);
   }
   if (!arguments.no_lead) {
     // Validate the supplied options
     if (arguments.min_lead_size >= arguments.max_lead_size) {
-      printf("Error: Max lead size (%d) must be larger than min lead size (%d).\n",
+      printf("Error: Max lead size (%lu) must be larger than min lead size (%lu).\n",
 	     arguments.max_lead_size, arguments.min_lead_size);
       return -1;
     }
     // Check that kernel sizes are odd
     if (!(arguments.min_lead_size % 2) && (!config.quiet))
-      printf("Warning: Min lead size (%d) should be an odd number.\n", arguments.min_lead_size);
+      printf("Warning: Min lead size (%lu) should be an odd number.\n", arguments.min_lead_size);
     if (!(arguments.max_lead_size % 2) && (!config.quiet))
-      printf("Warning: Max lead size (%d) should be an odd number.\n", arguments.max_lead_size);
+      printf("Warning: Max lead size (%lu) should be an odd number.\n", arguments.max_lead_size);
   }
   
   // Open the HDF5 file

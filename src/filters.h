@@ -4,9 +4,9 @@
 enum operation {Min, Max};
 
 // Type definitions
-typedef uint16_t DIM;
+typedef uint64_t DIM;
 typedef uint64_t DDIM;
-typedef float VEC;
+typedef double VEC;
 typedef float DTYPE;
 typedef struct {
   DIM nslices;
@@ -49,7 +49,7 @@ static float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DI
 
 char tp_apply_filter(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel, enum operation op);
 
-void print_progress(DIM current, DIM total, char desc[]);
+void print_progress(DIM current, DIM total, const char* desc);
 
 static char tp_subtract_datasets(hid_t src_ds1, hid_t src_ds2, hid_t dest_ds);
 

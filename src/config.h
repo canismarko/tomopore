@@ -10,11 +10,4 @@ typedef struct {
   int quiet;
 } Config;
 
-#ifdef TP_CONFIG_EXTERN
-extern Config config
-#endif
-
-#ifndef TP_CONFIG_EXTERN
-#define TP_CONFIG_EXTERN
-Config config;
-#endif
+inline Config config;

@@ -201,7 +201,7 @@ char tp_apply_filter
     ThreadPayload *payload;
     for (DIM tidx=0; tidx < config.n_threads; tidx++) {
       if (next_row < n_rows) {
-	payload = malloc(sizeof(ThreadPayload));
+	payload = (ThreadPayload *) malloc(sizeof(ThreadPayload));
 	payload->row_start = next_row;
 	next_row += rows_per_thread;
 	payload->row_end = min_d(next_row, n_rows);
@@ -249,7 +249,7 @@ char tp_apply_filter
 }
 
 
-void print_progress(DIM current, DIM total, char desc[])
+void print_progress(DIM current, DIM total, const char* desc)
 {
   if (config.quiet)
     return;
@@ -268,7 +268,7 @@ void print_progress(DIM current, DIM total, char desc[])
     }
   }
   // Do the printing
-  printf("\r%s: |%s| %d/%d (%.1f%%)", desc, bar, current, total, ratio * 100.);
+  printf("\r%s: |%s| %lu/%lu (%.1f%%)", desc, bar, current, total, ratio * 100.);
   if (current == total) {
     // We're finished, so print a newline
     printf("\n");
@@ -391,6 +391,7 @@ char tp_subtract_datasets(hid_t src_ds1, hid_t src_ds2, hid_t dest_ds)
     if (config.verbose)
       print_progress(islc, shape[0]-1, "Subtracting");
   }
+  return 0;
 }
 
 
@@ -414,6 +415,7 @@ void *tp_apply_kernel_thread(void *args)
 							 payload->op);
     }
   }
+  return 0;
 }
 
 
@@ -461,7 +463,7 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, D
   /* H5Dclose(temporary_ds2);  */
   free(kernelmax);
   free(kernelmin);
-  return 0;
+  return result;
 }
 
 
@@ -509,14 +511,14 @@ char tp_extract_lead(hid_t volume_ds, hid_t lead_ds, hid_t h5fp, char *name, DIM
 char tp_apply_erosion(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 {
   if (config.verbose)
-    printf("Applying erosion filter: (%d, %d, %d) kernel.\n", kernel->nslices, kernel->nrows, kernel->ncolumns);
+    printf("Applying erosion filter: (%lu, %lu, %lu) kernel.\n", kernel->nslices, kernel->nrows, kernel->ncolumns);
   return tp_apply_filter(src_ds, dest_ds, kernel, Min);
 }
 
 char tp_apply_dilation(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 {
   if (config.verbose)
-    printf("Applying dilation filter: (%d, %d, %d) kernel.\n", kernel->nslices, kernel->nrows, kernel->ncolumns);
+    printf("Applying dilation filter: (%lu, %lu, %lu) kernel.\n", kernel->nslices, kernel->nrows, kernel->ncolumns);
   return tp_apply_filter(src_ds, dest_ds, kernel, Max);
 }
 
@@ -535,6 +537,7 @@ char tp_apply_opening(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
   if (result < 0) {
     fprintf(stderr, "Error: Could not apply max filter.\n");
   }
+  return 0;
 }
 
 
@@ -554,6 +557,7 @@ char tp_apply_closing(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
   if (result < 0) {
     fprintf(stderr, "Error: Could not apply min filter.\n");
   }
+  return result;
 }
 
 
@@ -599,9 +603,9 @@ char tp_apply_black_tophat(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 
 Matrix3D *tp_matrixmalloc(DIM n_slices, DIM n_rows, DIM n_columns) {
   // Allocated memory for the 3D matrix
-  Matrix3D *new_matrix = malloc(sizeof(Matrix3D) + n_slices * n_rows * n_columns * sizeof(DTYPE));
+  Matrix3D *new_matrix = (Matrix3D *) malloc(sizeof(Matrix3D) + n_slices * n_rows * n_columns * sizeof(DTYPE));
   if (new_matrix == NULL) {
-    fprintf(stderr, "Unable to allocate memory for (%u, %u, %u) array.", n_slices, n_rows, n_columns);
+    fprintf(stderr, "Unable to allocate memory for (%lu, %lu, %lu) array.", n_slices, n_rows, n_columns);
   } 
   // Store the size of the array
   new_matrix->nslices = n_slices;
@@ -613,9 +617,9 @@ Matrix3D *tp_matrixmalloc(DIM n_slices, DIM n_rows, DIM n_columns) {
 
 Matrix2D *tp_matrixmalloc2d(DIM n_rows, DIM n_columns) {
   // Allocated memory for the 2D matrix
-  Matrix2D *new_matrix = malloc(sizeof(Matrix2D) + n_rows * n_columns * sizeof(DTYPE));
+  Matrix2D *new_matrix = (Matrix2D *) malloc(sizeof(Matrix2D) + n_rows * n_columns * sizeof(DTYPE));
   if (new_matrix == NULL) {
-    fprintf(stderr, "Unable to allocate memory for (%u, %u) array.", n_rows, n_columns);
+    fprintf(stderr, "Unable to allocate memory for (%lu, %lu) array.", n_rows, n_columns);
   } 
   // Store the size of the array
   new_matrix->nrows = n_rows;
@@ -663,9 +667,11 @@ void tp_ellipsoid(Matrix3D *kernel)
   // Determine the center and radius along each axis
   Vector r_vec;
   uint64_t r_total;
-  Vector center = {.z = (float) (kernel->nslices - 1) / 2.,
-		   .y = (float) (kernel->nrows - 1) / 2.,
-		   .x = (float) (kernel->ncolumns - 1) / 2.};
+  Vector center = {
+    .z = (kernel->nslices - 1) / 2.,
+    .y = (kernel->nrows - 1) / 2.,
+    .x = (kernel->ncolumns - 1) / 2.
+  };
   Vector R_max = {.z = center.z*center.z, .y = center.y*center.y, .x = center.x * center.x};
   // Iterate over the array and set the value depending on if it's in the ellipsoid
   uint16_t i, j, k;
