@@ -10,4 +10,4 @@ typedef struct {
   int quiet;
 } Config;
 
-inline Config config;
+extern Config config;
