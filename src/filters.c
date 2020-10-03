@@ -20,9 +20,9 @@ float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow,
 // dL, dM, dN -> reach of the kernel, so for a 3x3x3 kernel, each is (3-1)/2 = 1
 // Calculate some values to relate between the kernel and the subvolume
 {
-  DIM dL = (kernel->nslices - 1) / 2;
-  DIM dM = (kernel->nrows - 1) / 2;
-  DIM dN = (kernel->ncolumns - 1) / 2;
+  DIM dL = (kernel->getNSlices() - 1) / 2;
+  DIM dM = (kernel->getNRows() - 1) / 2;
+  DIM dN = (kernel->getNColumns() - 1) / 2;
   DIM i, j, k;
   DDIM subvolume_slice_idx = 0;
   DDIM subvolume_idx = 0;
@@ -35,25 +35,25 @@ float tp_apply_kernel(Matrix3D *subvolume, Matrix3D *kernel, DIM islc, DIM irow,
   // Iterate over the kernel dimensions, then apply them to the main arr
   // i, j, k are in the buffer space
   // l, m, n are in the kernel space
-  for (DIM l=0; l < kernel->nslices; l++) {
+  for (DIM l=0; l < kernel->getNSlices(); l++) {
     i = islc + (l - dL);
     // Check if this is a valid slice in the subvolume
-    is_in_bounds = (i >= 0) && (i < subvolume->nslices);
+    is_in_bounds = (i >= 0) && (i < subvolume->getNSlices());
     if (!is_in_bounds) continue;
     // Keep track of where we are in the subvolume
-    subvolume_slice_idx = i * subvolume->nrows * subvolume->ncolumns;
-    for (DIM m=0; m < kernel->nrows; m++) {
+    subvolume_slice_idx = i * subvolume->getNRows() * subvolume->getNColumns();
+    for (DIM m=0; m < kernel->getNRows(); m++) {
       j = irow + (m - dM);
       // Check if this is a valid row in the subvolume
-      is_in_bounds = (j >= 0) && (j < subvolume->nrows);
+      is_in_bounds = (j >= 0) && (j < subvolume->getNRows());
       if (!is_in_bounds) continue;
       // Keep track of where we are in the subvolume
-      subvolume_idx = subvolume_slice_idx + j * subvolume->ncolumns;
-      for (DIM n=0; n < kernel->ncolumns; n++) {
+      subvolume_idx = subvolume_slice_idx + j * subvolume->getNColumns();
+      for (DIM n=0; n < kernel->getNColumns(); n++) {
 	// Calculate relative coordinates in the arr matrix
 	k = icol + (n - dN);
 	// Check if this is a valid column in the subvolume
-	is_in_bounds = (k >= 0) && (k < subvolume->ncolumns);
+	is_in_bounds = (k >= 0) && (k < subvolume->getNColumns());
 	if (!is_in_bounds) continue;
 	// Retrieve the values from arrays and perform the actual
 	// operation
@@ -100,13 +100,13 @@ char tp_apply_filter
   }
   hsize_t shape[3];
   H5Sget_simple_extent_dims(src_filespace_id, shape, NULL);
-  DIM n_slcs = kernel->nslices;
+  DIM n_slcs = kernel->getNSlices();
   hsize_t n_rows = shape[1];
   hsize_t n_cols = shape[2];
   // Create an array to hold the data as it's loaded from disk
-  Matrix3D *working_buffer = tp_matrixmalloc(n_slcs, n_rows, n_cols);
+  Matrix3D working_buffer = Matrix3D(n_slcs, n_rows, n_cols);
   // DTYPE pore_slice_buffer[n_rows][n_cols];
-  Matrix2D *pore_slice_buffer = tp_matrixmalloc2d(n_rows, n_cols);
+  Matrix2D pore_slice_buffer = Matrix2D(n_rows, n_cols);
   hid_t dest_filespace_id = H5Dget_space(dest_ds);
   // Prepare HDF5 dataspaces for reading and writing
   hsize_t strides[3] = {1, 1, 1};
@@ -132,7 +132,7 @@ char tp_apply_filter
 			 src_memspace_id,  // mem_space_id
 			 src_filespace_id,      // file_space_id
 			 H5P_DEFAULT,       // xfer_plist_id
-			 working_buffer->arr // buffer to hold the data
+			 working_buffer.arr // buffer to hold the data
 			 );
   if (error < 0) {
     fprintf(stderr, "Failed to read dataset: %d\n", error);
@@ -140,7 +140,7 @@ char tp_apply_filter
   }
   // Update the memory space so we can read one slice at a time
   read_blocks[0] = 1; // So we only get one slice at a time going forward
-  hsize_t read_mem_starts[3] = {kernel->nslices - 1, 0, 0}; // Gets update as new rows are read
+  hsize_t read_mem_starts[3] = {kernel->getNSlices() - 1, 0, 0}; // Gets update as new rows are read
   src_memspace_id = H5Screate_simple(RANK, read_extent, NULL);
   H5Sselect_hyperslab(src_memspace_id, // space_id,
 		      H5S_SELECT_SET,  // op,
@@ -153,7 +153,7 @@ char tp_apply_filter
   uint8_t in_head = 0;
   uint8_t in_tail = 0;
   uint8_t update_needed = 0;
-  DIM dL = (kernel->nslices - 1) / 2;
+  DIM dL = (kernel->getNSlices() - 1) / 2;
   DIM new_buffslc;
   DIM new_diskslc;
   DIM new_islc;
@@ -168,7 +168,7 @@ char tp_apply_filter
       new_diskslc = islc + dL;
       new_islc = dL;
       // Move each slice down
-      roll_buffer(working_buffer);
+      roll_buffer(&working_buffer);
       // Get a new last slice
       read_file_starts[0] = new_diskslc;
       H5Sselect_hyperslab(src_filespace_id,   // space_id,
@@ -183,7 +183,7 @@ char tp_apply_filter
 			     src_memspace_id,  // mem_space_id
 			     src_filespace_id,      // file_space_id
 			     H5P_DEFAULT,       // xfer_plist_id
-			     working_buffer->arr // buffer to hold the data
+			     working_buffer.arr // buffer to hold the data
 			     );
       if (error < 0) {
 	fprintf(stderr, "Failed to read dataset: %d\n", error);
@@ -192,7 +192,7 @@ char tp_apply_filter
     } else if (in_head) {
       new_islc = islc;
     } else if (in_tail) {
-      new_islc = islc - shape[0] + kernel->nrows;
+      new_islc = islc - shape[0] + kernel->getNRows();
     }
     // Step through each pixel in the row and apply the kernel */
     DIM rows_per_thread = (DIM) ceil((double) n_rows / (double) config.n_threads);
@@ -207,8 +207,8 @@ char tp_apply_filter
 	payload->row_end = min_d(next_row, n_rows);
 	payload->n_cols = n_cols;
 	payload->new_islc = new_islc;
-	payload->pore_slice_buffer = pore_slice_buffer;
-	payload->working_buffer = working_buffer;
+	payload->pore_slice_buffer = &pore_slice_buffer;
+	payload->working_buffer = &working_buffer;
 	payload->kernel = kernel;
 	payload->op = op;
 	pthread_create(&tids[tidx], NULL, tp_apply_kernel_thread, payload);
@@ -236,7 +236,7 @@ char tp_apply_filter
 			    dest_memspace_id,      // mem_space_id
 			    dest_filespace_id,     // file_space_id
 			    H5P_DEFAULT,           // xfer_plist_id
-			    pore_slice_buffer->arr // *buf
+			    pore_slice_buffer.arr // *buf
 			    );
     if (error < 0) {
       fprintf(stderr, "Failed to write dataset: %d\n", error);
@@ -311,9 +311,9 @@ char tp_subtract_datasets(hid_t src_ds1, hid_t src_ds2, hid_t dest_ds)
   hsize_t n_rows = shape[1];
   hsize_t n_cols = shape[2];
   // Create arrays to hold the data as it's loaded from disk
-  Matrix2D *input_buffer1 = tp_matrixmalloc2d(n_rows, n_cols);
-  Matrix2D *input_buffer2 = tp_matrixmalloc2d(n_rows, n_cols);
-  Matrix2D *output_buffer = tp_matrixmalloc2d(n_rows, n_cols);
+  Matrix2D input_buffer1 = Matrix2D(n_rows, n_cols);
+  Matrix2D input_buffer2 = Matrix2D(n_rows, n_cols);
+  Matrix2D output_buffer = Matrix2D(n_rows, n_cols);
   // Prepare HDF5 dataspaces for reading and writing
   hsize_t strides[3] = {1, 1, 1};
   hsize_t counts[3] = {1, 1, 1};
@@ -338,7 +338,7 @@ char tp_subtract_datasets(hid_t src_ds1, hid_t src_ds2, hid_t dest_ds)
 		    memspace,          // mem_space_id
 		    src_filespace1,    // file_space_id
 		    H5P_DEFAULT,       // xfer_plist_id
-		    input_buffer1->arr // buffer to hold the data
+		    input_buffer1.arr // buffer to hold the data
 		    );
     if (error < 0) {
       printf("Read failed\n");
@@ -356,7 +356,7 @@ char tp_subtract_datasets(hid_t src_ds1, hid_t src_ds2, hid_t dest_ds)
 		    memspace,          // mem_space_id
 		    src_filespace2,    // file_space_id
 		    H5P_DEFAULT,       // xfer_plist_id
-		    input_buffer2->arr // buffer to hold the data
+		    input_buffer2.arr // buffer to hold the data
 		    );
     if (error < 0) {
       printf("Read failed\n");
@@ -365,8 +365,8 @@ char tp_subtract_datasets(hid_t src_ds1, hid_t src_ds2, hid_t dest_ds)
     // Do the subtraction elemenet-wise
     for (DIM irow=0; irow<n_rows; irow++) {
       for (DIM icol=0; icol<n_cols; icol++) {
-	DDIM this_i = tp_indices2d(output_buffer, irow, icol);
-	output_buffer->arr[this_i] = input_buffer1->arr[this_i] - input_buffer2->arr[this_i];
+	DTYPE new_val = input_buffer1.getElement(irow, icol) - input_buffer2.getElement(irow, icol);
+	output_buffer.setElement(irow, icol, new_val);
       }
     }
     // Write this slice back to disk
@@ -382,7 +382,7 @@ char tp_subtract_datasets(hid_t src_ds1, hid_t src_ds2, hid_t dest_ds)
 		     memspace,           // mem_space_id
 		     dest_filespace,     // file_space_id
 		     H5P_DEFAULT,        // xfer_plist_id
-		     output_buffer->arr  // *buf
+		     output_buffer.arr  // *buf
 		     );
     if (error < 0) {
       fprintf(stderr, "Failed to write dataset: %d\n", error);
@@ -406,13 +406,13 @@ void *tp_apply_kernel_thread(void *args)
   DDIM this_idx;
   for (DIM irow=payload->row_start; irow < payload->row_end; irow++) {
     for (DIM icol=0; icol < payload->n_cols; icol++) {
-      this_idx = tp_indices2d(pore_slice_buffer, irow, icol);
-      pore_slice_buffer->arr[this_idx] = tp_apply_kernel(working_buffer,
-							 kernel,
-							 payload->new_islc,
-							 irow,
-							 icol,
-							 payload->op);
+      DTYPE new_val = tp_apply_kernel(working_buffer,
+				      kernel,
+				      payload->new_islc,
+				      irow,
+				      icol,
+				      payload->op);
+      pore_slice_buffer->setElement(irow, icol, new_val);
     }
   }
   return 0;
@@ -432,10 +432,10 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, D
   }
 
   // Create a kernel for the black tophat filters
-  Matrix3D *kernelmax = tp_matrixmalloc(max_pore_size, max_pore_size, max_pore_size);
-  tp_ellipsoid(kernelmax);
-  Matrix3D *kernelmin = tp_matrixmalloc(min_pore_size, min_pore_size, min_pore_size);
-  tp_ellipsoid(kernelmin);
+  Matrix3D kernelmax = Matrix3D(max_pore_size, max_pore_size, max_pore_size);
+  tp_ellipsoid(&kernelmax);
+  Matrix3D kernelmin = Matrix3D(min_pore_size, min_pore_size, min_pore_size);
+  tp_ellipsoid(&kernelmin);
 
   // Prepare a temporary dataset to hold the intermediate data
   hid_t src_space = H5Dget_space(volume_ds);
@@ -446,23 +446,20 @@ char tp_extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, D
   char result;
   if (min_pore_size > 0) {
     // A minimum pore size was requested, so do it in multiple steps
-    result = tp_apply_black_tophat(volume_ds, temporary_ds, kernelmin);
+    result = tp_apply_black_tophat(volume_ds, temporary_ds, &kernelmin);
   
     // Apply large black tophat filter
-    result = tp_apply_black_tophat(volume_ds, pores_ds, kernelmax);
+    result = tp_apply_black_tophat(volume_ds, pores_ds, &kernelmax);
   
     // Subtract the two
     result = tp_subtract_datasets(pores_ds, temporary_ds, pores_ds);
   } else {
     // No minimum pore size, so single-step extraction
-    result = tp_apply_black_tophat(volume_ds, pores_ds, kernelmax);
+    result = tp_apply_black_tophat(volume_ds, pores_ds, &kernelmax);
   }
 
-  // Free up memory and return
+  // Close remaining open datasets
   H5Dclose(temporary_ds);
-  /* H5Dclose(temporary_ds2);  */
-  free(kernelmax);
-  free(kernelmin);
   return result;
 }
 
@@ -479,10 +476,10 @@ char tp_extract_lead(hid_t volume_ds, hid_t lead_ds, hid_t h5fp, char *name, DIM
 	     "===============================\n");
   }
   // Create a kernel for the black tophat filters
-  Matrix3D *kernelmax = tp_matrixmalloc(max_lead_size, max_lead_size, max_lead_size);
-  tp_ellipsoid(kernelmax);
-  Matrix3D *kernelmin = tp_matrixmalloc(min_lead_size, min_lead_size, min_lead_size);
-  tp_ellipsoid(kernelmin);
+  Matrix3D kernelmax = Matrix3D(max_lead_size, max_lead_size, max_lead_size);
+  tp_ellipsoid(&kernelmax);
+  Matrix3D kernelmin = Matrix3D(min_lead_size, min_lead_size, min_lead_size);
+  tp_ellipsoid(&kernelmin);
 
   // Prepare a temporary dataset to hold the intermediate data
   hid_t src_space = H5Dget_space(volume_ds);
@@ -491,18 +488,16 @@ char tp_extract_lead(hid_t volume_ds, hid_t lead_ds, hid_t h5fp, char *name, DIM
 
   // Apply small black tophat filter
   char result;
-  result = tp_apply_white_tophat(volume_ds, temporary_ds, kernelmin);
+  result = tp_apply_white_tophat(volume_ds, temporary_ds, &kernelmin);
   
   // Apply large black tophat filter
-  result = tp_apply_white_tophat(volume_ds, lead_ds, kernelmax);
+  result = tp_apply_white_tophat(volume_ds, lead_ds, &kernelmax);
   
   // Subtract the two
   result = tp_subtract_datasets(lead_ds, temporary_ds, lead_ds);
 
-  // Free up memory and return
+  // Close any opened datasets
   H5Dclose(temporary_ds);
-  free(kernelmax);
-  free(kernelmin);
   return 0;
 
 }
@@ -511,16 +506,18 @@ char tp_extract_lead(hid_t volume_ds, hid_t lead_ds, hid_t h5fp, char *name, DIM
 char tp_apply_erosion(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 {
   if (config.verbose)
-    printf("Applying erosion filter: (%lu, %lu, %lu) kernel.\n", kernel->nslices, kernel->nrows, kernel->ncolumns);
+    printf("Applying erosion filter: (%lu, %lu, %lu) kernel.\n", kernel->getNSlices(), kernel->getNRows(), kernel->getNColumns());
   return tp_apply_filter(src_ds, dest_ds, kernel, Min);
 }
+
 
 char tp_apply_dilation(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 {
   if (config.verbose)
-    printf("Applying dilation filter: (%lu, %lu, %lu) kernel.\n", kernel->nslices, kernel->nrows, kernel->ncolumns);
+    printf("Applying dilation filter: (%lu, %lu, %lu) kernel.\n", kernel->getNSlices(), kernel->getNRows(), kernel->getNColumns());
   return tp_apply_filter(src_ds, dest_ds, kernel, Max);
 }
+
 
 char tp_apply_opening(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 {
@@ -601,59 +598,23 @@ char tp_apply_black_tophat(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel)
 }
 
 
-Matrix3D *tp_matrixmalloc(DIM n_slices, DIM n_rows, DIM n_columns) {
-  // Allocated memory for the 3D matrix
-  Matrix3D *new_matrix = (Matrix3D *) malloc(sizeof(Matrix3D) + n_slices * n_rows * n_columns * sizeof(DTYPE));
-  if (new_matrix == NULL) {
-    fprintf(stderr, "Unable to allocate memory for (%lu, %lu, %lu) array.", n_slices, n_rows, n_columns);
-  } 
-  // Store the size of the array
-  new_matrix->nslices = n_slices;
-  new_matrix->nrows = n_rows;
-  new_matrix->ncolumns = n_columns;
-  return new_matrix;
-}
-
-
-Matrix2D *tp_matrixmalloc2d(DIM n_rows, DIM n_columns) {
-  // Allocated memory for the 2D matrix
-  Matrix2D *new_matrix = (Matrix2D *) malloc(sizeof(Matrix2D) + n_rows * n_columns * sizeof(DTYPE));
-  if (new_matrix == NULL) {
-    fprintf(stderr, "Unable to allocate memory for (%lu, %lu) array.", n_rows, n_columns);
-  } 
-  // Store the size of the array
-  new_matrix->nrows = n_rows;
-  new_matrix->ncolumns = n_columns;
-  return new_matrix;
-}
-
-
 void tp_normalize_kernel(Matrix3D *kernel)
 // Normalize the kernel so that the sum of all pixels equal 1
 {
   // Find out what unnormalized sum total is
   double total = 0;
-  for (uint16_t k=0; k < kernel->nslices; k++) {
-    for (uint16_t j=0; j < kernel->nrows; j++) {
-      for (uint16_t i=0; i < kernel->ncolumns; i++) {
-	total += kernel->arr[tp_indices(kernel, k, j, i)];
+  for (uint16_t s=0; s < kernel->getNSlices(); s++) {
+    for (uint16_t r=0; r < kernel->getNRows(); r++) {
+      for (uint16_t c=0; c < kernel->getNColumns(); c++) {
+	total += kernel->getElement(s, r, c);
       }
     }
   }
   // Divide every entry in the array by the sum total
-  for (uint16_t k=0; k < kernel->nslices; k++) {
-    for (uint16_t j=0; j < kernel->nrows; j++) {
-      for (uint16_t i=0; i < kernel->ncolumns; i++) {
-	DDIM idx = tp_indices(kernel, k, j, i);
-	kernel->arr[idx] = kernel->arr[idx] / total;
-      }
-    }
-  }
-  total = 0;
-  for (uint16_t k=0; k < kernel->nslices; k++) {
-    for (uint16_t j=0; j < kernel->nrows; j++) {
-      for (uint16_t i=0; i < kernel->ncolumns; i++) {
-	total += kernel->arr[tp_indices(kernel, k, j, i)];
+  for (uint16_t s=0; s < kernel->getNSlices(); s++) {
+    for (uint16_t r=0; r < kernel->getNRows(); r++) {
+      for (uint16_t c=0; c < kernel->getNColumns(); c++) {
+	kernel->setElement(s, r, c, kernel->getElement(s, r, c));
       }
     }
   }
@@ -668,26 +629,26 @@ void tp_ellipsoid(Matrix3D *kernel)
   Vector r_vec;
   uint64_t r_total;
   Vector center = {
-    .z = (kernel->nslices - 1) / 2.,
-    .y = (kernel->nrows - 1) / 2.,
-    .x = (kernel->ncolumns - 1) / 2.
+    .z = (kernel->getNSlices() - 1) / 2.,
+    .y = (kernel->getNRows() - 1) / 2.,
+    .x = (kernel->getNColumns() - 1) / 2.
   };
   Vector R_max = {.z = center.z*center.z, .y = center.y*center.y, .x = center.x * center.x};
   // Iterate over the array and set the value depending on if it's in the ellipsoid
-  uint16_t i, j, k;
-  for (i=0; i < kernel->nslices; i++) {
-    for (j=0; j < kernel->nrows; j++) {
-      for (k=0; k < kernel->ncolumns; k++) {
+  uint16_t s, r, c;
+  for (s=0; s < kernel->getNSlices(); s++) {
+    for (r=0; r < kernel->getNRows(); r++) {
+      for (c=0; c < kernel->getNColumns(); c++) {
 	// Calculate how far this point is from the center
-	r_vec.z = center.z - (float) i;
-	r_vec.y = center.y - (float) j;
-	r_vec.x = center.x - (float) k;
+	r_vec.z = center.z - (float) s;
+	r_vec.y = center.y - (float) r;
+	r_vec.x = center.x - (float) c;
 	float r_total = (r_vec.x * r_vec.x / R_max.x) +
 	  (r_vec.y * r_vec.y / R_max.y) + (r_vec.z * r_vec.z / R_max.z);
 	if (r_total <= 1.) {
-	  kernel->arr[tp_indices(kernel, i, j, k)] = 1.;
+	  kernel->setElement(s, r, c, 1.);
 	} else {
-	  kernel->arr[tp_indices(kernel, i, j, k)] = 0;
+	  kernel->setElement(s, r, c, 0.);
 	}
       }
     }
@@ -701,10 +662,10 @@ void tp_box(Matrix3D *kernel)
 // Take a kernel of pre-determined dimensions and fill it with 1's
 {
   // Iterate through the kernel and make each element 1. for a box
-  for (uint16_t i=0; i<kernel->nslices; i++) {
-    for (uint16_t j=0; j<kernel->ncolumns; j++) {
-      for (uint16_t k=0; k<kernel->nrows; k++) {
-	kernel->arr[tp_indices(kernel, i, j, k)] = 1.;
+  for (DIM s=0; s<kernel->getNSlices(); s++) {
+    for (DIM r=0; r<kernel->getNColumns(); r++) {
+      for (DIM c=0; c<kernel->getNRows(); c++) {
+	kernel->setElement(s, r, c, 1.);
       }
     }
   }
@@ -719,12 +680,10 @@ static void roll_buffer(Matrix3D *buffer)
 // a duplicate of the second to last line (slice).
 {
   uint64_t old_idx, new_idx;
-  for (DIM i=0; i < (buffer->nslices-1); i++) {
-    for (DIM j=0; j < buffer->nrows; j++) {
-      for (DIM k=0; k < buffer->ncolumns; k++) {
-	old_idx = tp_indices(buffer, i, j, k);
-	new_idx = tp_indices(buffer, i+1, j, k);
-	buffer->arr[old_idx] = buffer->arr[new_idx];
+  for (DIM s=0; s < (buffer->getNSlices()-1); s++) {
+    for (DIM r=0; r < buffer->getNRows(); r++) {
+      for (DIM c=0; c < buffer->getNColumns(); c++) {
+	buffer->setElement(s, r, c, buffer->getElement(s+1, r, c));
       }
     }
   }

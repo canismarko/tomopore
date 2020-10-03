@@ -15,8 +15,8 @@ tests: tomopore_tests.out
 install: tomopore
 	cp tomopore.out $(INSTALLDIR)/tomopore
 
-tomopore: src/tomopore.c src/filters.c src/hdfhelpers.c src/config.cpp
-	$(CC) -o tomopore.out src/tomopore.c src/filters.c src/hdfhelpers.c src/config.cpp $(LINK)
+tomopore: src/tomopore.c src/filters.c src/hdfhelpers.c src/config.cpp src/matrix.cpp
+	$(CC) -o tomopore.out src/tomopore.c src/filters.c src/hdfhelpers.c src/config.cpp src/matrix.cpp $(LINK)
 
 tomopore_tests.out: tests/test_math.c
 	$(CC) -o tomopore_tests.out tests/test_math.c $(LINK)

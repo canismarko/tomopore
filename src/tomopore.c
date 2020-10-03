@@ -381,16 +381,3 @@ int main(int argc, char *argv[]) {
   }
   return return_val;
 }
-
-
-
-
-// Take a volume and return a flattened index for a given slice, row and column
-DDIM tp_indices(Matrix3D *vol, DIM islice, DIM irow, DIM icolumn) {
-  return islice * vol->nrows * vol->ncolumns + irow * vol->ncolumns + icolumn;
-}
-
-// Take a slice and return a flattened index for a given row and column
-DDIM tp_indices2d(Matrix2D *vol, DIM irow, DIM icolumn) {
-  return irow * vol->ncolumns + icolumn;
-}

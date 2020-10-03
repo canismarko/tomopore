@@ -1,34 +1,11 @@
 #include <hdf5.h>
 
+#include "matrix.h"
+
 #ifndef TP_FILTERS
 enum operation {Min, Max};
 
 // Type definitions
-typedef uint64_t DIM;
-typedef uint64_t DDIM;
-typedef double VEC;
-typedef float DTYPE;
-typedef struct {
-  DIM nslices;
-  DIM nrows;
-  DIM ncolumns;
-  DTYPE arr[];
-} Matrix3D;
-typedef struct {
-  DIM nrows;
-  DIM ncolumns;
-  DTYPE arr[];
-} Matrix2D;
-typedef struct {
-  DIM z;
-  DIM y;
-  DIM x;
-} Point;
-typedef struct {
-  VEC z;
-  VEC y;
-  VEC x;
-} Vector;
 typedef struct ThreadPayload {
   DIM row_start;
   DIM row_end;
@@ -68,16 +45,10 @@ char tp_apply_opening(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel);
 char tp_apply_dilation(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel);
 char tp_apply_erosion(hid_t src_ds, hid_t dest_ds, Matrix3D *kernel);
 
-Matrix3D *tp_matrixmalloc(DIM n_slices, DIM n_rows, DIM n_columns);
-Matrix2D *tp_matrixmalloc2d(DIM n_rows, DIM n_columns);
-
 void tp_normalize_kernel(Matrix3D *kernel);
 
 void tp_ellipsoid(Matrix3D *kernel);
 void tp_box(Matrix3D *kernel);
-
-DDIM tp_indices(Matrix3D *vol, DIM islice, DIM irow, DIM icolumn);
-DDIM tp_indices2d(Matrix2D *vol, DIM irow, DIM icolumn);
 
 static void roll_buffer(Matrix3D *buffer);
 
