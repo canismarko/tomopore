@@ -1,9 +1,10 @@
 # GCC for debugging
-# OPTIMIZATIONS=-g -pg
+CXX_FLAGS=-g -pg -D TP_DEBUG
 # GCC for deployment
-OPTIMIZATIONS=-O2
-CC=g++ $(OPTIMIZATIONS)
+CXX_FLAGS=-O2 -D TP_RELEASE
+
 LINK=-lhdf5 -lm -lpthread
+CC=g++ $(CXX_FLAGS) $(LINK)
 INSTALLDIR=$(HOME)/bin
 
 .phony: all, tests, install
@@ -16,7 +17,7 @@ install: tomopore
 	cp tomopore.out $(INSTALLDIR)/tomopore
 
 tomopore: src/tomopore.c src/filters.c src/hdfhelpers.c src/config.cpp src/matrix.cpp
-	$(CC) -o tomopore.out src/tomopore.c src/filters.c src/hdfhelpers.c src/config.cpp src/matrix.cpp $(LINK)
+	$(CC) -o tomopore.out src/tomopore.c src/filters.c src/hdfhelpers.c src/config.cpp src/matrix.cpp
 
 tomopore_tests.out: tests/test_math.c
-	$(CC) -o tomopore_tests.out tests/test_math.c $(LINK)
+	$(CC) -o tomopore_tests.out tests/test_math.c

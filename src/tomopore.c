@@ -342,10 +342,10 @@ int main(int argc, char *argv[]) {
     hid_t dst_ds_pores;
     char result_pores = 0;
     // Create a new destination dataset
-    dst_ds_pores = tp_replace_dataset(arguments.dest_pores, h5fp, src_space, src_type);
+    dst_ds_pores = tomopore::replace_dataset(arguments.dest_pores, h5fp, src_space, src_type);
     // Apply the morpohology filters to extract the pore and lead structures
-    result_pores = tp_extract_pores(src_ds, dst_ds_pores, h5fp, arguments.dest_pores,
-				    arguments.min_pore_size, arguments.max_pore_size);
+    result_pores = tomopore::extract_pores(src_ds, dst_ds_pores, h5fp, arguments.dest_pores,
+					   arguments.min_pore_size, arguments.max_pore_size);
     // Close dataset
     H5Dclose(dst_ds_pores);
     // Check if the pore structure extraction finished successfully
@@ -358,10 +358,10 @@ int main(int argc, char *argv[]) {
     hid_t dst_ds_lead;
     char result_lead = 0;
     // Create a new destination dataset
-    dst_ds_lead = tp_replace_dataset(arguments.dest_lead, h5fp, src_space, src_type);
+    dst_ds_lead = tomopore::replace_dataset(arguments.dest_lead, h5fp, src_space, src_type);
     // Apply the morpohology filters to extract the pore and lead structures
-    result_lead = tp_extract_lead(src_ds, dst_ds_lead, h5fp, arguments.dest_lead,
-				  arguments.min_lead_size, arguments.max_lead_size);
+    result_lead = tomopore::extract_lead(src_ds, dst_ds_lead, h5fp, arguments.dest_lead,
+					 arguments.min_lead_size, arguments.max_lead_size);
     // Close destination dataset
     H5Dclose(dst_ds_lead);
     // Check if the free-lead extraction finished successfully

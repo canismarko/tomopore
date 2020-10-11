@@ -1,4 +1,8 @@
 #include <hdf5.h>
 
-hid_t tp_replace_dataset(char *dataset_name, hid_t h5fp, hid_t dataspace, hid_t datatype);
-hid_t tp_require_dataset(char *dataset_name, hid_t h5fp, hid_t dataspace, hid_t datatype);
+namespace tomopore {
+
+  hid_t replace_dataset(char *dataset_name, hid_t h5fp, hid_t dataspace, hid_t datatype);
+  hid_t require_dataset(char *dataset_name, hid_t h5fp, hid_t dataspace, hid_t datatype);
+
+}
