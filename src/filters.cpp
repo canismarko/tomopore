@@ -409,11 +409,11 @@ namespace tomopore {
     for (DIM irow=payload->row_start; irow < payload->row_end; irow++) {
       for (DIM icol=0; icol < payload->n_cols; icol++) {
 	DTYPE new_val = apply_kernel(working_buffer,
-					kernel,
-					payload->new_islc,
-					irow,
-					icol,
-					payload->op);
+				     kernel,
+				     payload->new_islc,
+				     irow,
+				     icol,
+				     payload->op);
 	pore_slice_buffer->setElement(irow, icol, new_val);
       }
     }
@@ -422,7 +422,7 @@ namespace tomopore {
 
 
   // Take a 3D volume of tomography data and isolate the pore structure using morphology filters
-  char extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, DIM min_pore_size, DIM max_pore_size)
+  char extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, DIM min_pore_size, DIM max_pore_size, int white_tophat)
   {
     if (max_pore_size <= 1) {
       if (!config.quiet)
@@ -443,66 +443,31 @@ namespace tomopore {
     // Prepare a temporary dataset to hold the intermediate data
     hid_t src_space = H5Dget_space(volume_ds);
     hid_t src_type = H5Dget_type(volume_ds);
-    hid_t temporary_ds = replace_dataset(strcat(strdup(name), "_tomopore_temp"), h5fp, src_space, src_type);
+    hid_t temporary_ds = replace_dataset(strcat(strdup(name), "_temp"), h5fp, src_space, src_type);
+
+    // Determine which tophat filter to apply
+    char (*apply_tophat)(hid_t src_ds, hid_t dest_ds, tomopore::Matrix3D *kernel);
+    apply_tophat = white_tophat ? &tomopore::apply_white_tophat : &tomopore::apply_black_tophat;
 
     // Apply small black tophat filter
     char result;
     if (min_pore_size > 0) {
       // A minimum pore size was requested, so do it in multiple steps
-      result = tomopore::apply_black_tophat(volume_ds, temporary_ds, &kernelmin);
+      result = apply_tophat(volume_ds, temporary_ds, &kernelmin);
   
       // Apply large black tophat filter
-      result = tomopore::apply_black_tophat(volume_ds, pores_ds, &kernelmax);
+      result = apply_tophat(volume_ds, pores_ds, &kernelmax);
   
       // Subtract the two
       result = tomopore::subtract_datasets(pores_ds, temporary_ds, pores_ds);
     } else {
       // No minimum pore size, so single-step extraction
-      result = tomopore::apply_black_tophat(volume_ds, pores_ds, &kernelmax);
+      result = apply_tophat(volume_ds, pores_ds, &kernelmax);
     }
 
     // Close remaining open datasets
     H5Dclose(temporary_ds);
     return result;
-  }
-
-
-  // Take a 3D volume of tomography data and isolate the lead structure using morphology filters
-  char extract_lead(hid_t volume_ds, hid_t lead_ds, hid_t h5fp, char *name, DIM min_lead_size, DIM max_lead_size) {
-    if (max_lead_size <= 1) {
-      if (!config.quiet)
-	printf("Skipping free lead extraction since max_lead_size <= 1\n");
-      return 0;
-    } else {
-      if (!config.quiet)
-	printf("\nFree lead extraction (4 passes)\n"
-	       "===============================\n");
-    }
-    // Create a kernel for the black tophat filters
-    tomopore::Matrix3D kernelmax = tomopore::Matrix3D(max_lead_size, max_lead_size, max_lead_size);
-    tomopore::ellipsoid(&kernelmax);
-    tomopore::Matrix3D kernelmin = tomopore::Matrix3D(min_lead_size, min_lead_size, min_lead_size);
-    tomopore::ellipsoid(&kernelmin);
-
-    // Prepare a temporary dataset to hold the intermediate data
-    hid_t src_space = H5Dget_space(volume_ds);
-    hid_t src_type = H5Dget_type(volume_ds);
-    hid_t temporary_ds = tomopore::replace_dataset(strcat(strdup(name), "_tomopore_temp"), h5fp, src_space, src_type);
-
-    // Apply small black tophat filter
-    char result;
-    result = tomopore::apply_white_tophat(volume_ds, temporary_ds, &kernelmin);
-  
-    // Apply large black tophat filter
-    result = tomopore::apply_white_tophat(volume_ds, lead_ds, &kernelmax);
-  
-    // Subtract the two
-    result = tomopore::subtract_datasets(lead_ds, temporary_ds, lead_ds);
-
-    // Close any opened datasets
-    H5Dclose(temporary_ds);
-    return 0;
-
   }
 
 

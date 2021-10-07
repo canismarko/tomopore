@@ -36,9 +36,7 @@ namespace tomopore {
 
   static void *apply_kernel_thread(void *args);
 
-  char extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, DIM min_pore_size, DIM max_pore_size);
-
-  char extract_lead(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, DIM min_pore_size, DIM max_pore_size);
+  char extract_pores(hid_t volume_ds, hid_t pores_ds, hid_t h5fp, char *name, DIM min_pore_size, DIM max_pore_size, int white_tophat);
 
   char apply_black_tophat(hid_t src_ds, hid_t dest_ds, tomopore::Matrix3D *kernel);
   char apply_white_tophat(hid_t src_ds, hid_t dest_ds, tomopore::Matrix3D *kernel);

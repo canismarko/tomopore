@@ -22,8 +22,6 @@ const DIM LEAD_MIN_SIZE = 5;
 const DIM LEAD_MAX_SIZE = 35;
 const char *SOURCE_NAME = "volume";
 const char *DEST_NAME_PORES = "pores";
-const char *DEST_NAME_LEAD = "lead";
-
 
 // Documentation for the ``--help`` argument
 const char *argp_program_version =
@@ -37,6 +35,8 @@ static char doc[] =
 static char args_doc[] =
   "H5_FILE";
 
+enum tophat_direction {black, white};
+
 // Global variables
 /* static struct { */
 /*   int n_threads, verbose, quiet; */
@@ -46,10 +46,9 @@ static char args_doc[] =
 #define OPT_MAX_PORE_SIZE 2
 #define OPT_MIN_LEAD_SIZE 3
 #define OPT_MAX_LEAD_SIZE 4
-#define OPT_DEST_PORES 5
-#define OPT_DEST_LEAD 6
-#define OPT_NO_PORES 7
-#define OPT_NO_LEAD 8
+#define OPT_DEST 'd'
+#define OPT_NO_PORES 5
+#define OPT_NO_LEAD 6
 
 static struct argp_option options[] = {
   {"threads", 'j', "NUM_THREADS", 0, "Number of parallel threads, defaults to using all cores", 0},
@@ -57,16 +56,11 @@ static struct argp_option options[] = {
   {"quiet",    'q', 0,      0,  "Don't produce any output", 0},
   
   {"source", 's', "DATASET", 0, "Path to the source dataset containing float volume data", 1},
-  {"dest-pores", OPT_DEST_PORES, "DATASET", 0, "Path to the dataset that will receive segmented pores", 1},
-  {"dest-lead", OPT_DEST_LEAD, "DATASET", 0, "Path to the dataset that will receive segmented free lead", 1},
-
-  {"no-pores", OPT_NO_PORES, 0, 0, "Skip segmentation of pores", 2},
-  {"no-lead", OPT_NO_LEAD, 0, 0, "Skip segmentation of free lead", 2},
+  {"dest", OPT_DEST, "DATASET", 0, "Path to the dataset that will receive segmented pores", 1},
 
   {"min-pore-size", OPT_MIN_PORE_SIZE, "SIZE", 0, "Minimum size of pores (in pixels)", 3},
   {"max-pore-size", OPT_MAX_PORE_SIZE, "SIZE", 0, "Maximum size of pores (in pixels)", 3},
-  {"min-lead-size", OPT_MIN_LEAD_SIZE, "SIZE", 0, "Minimum size of lead (in pixels)", 3},
-  {"max-lead-size", OPT_MAX_LEAD_SIZE, "SIZE", 0, "Maximum size of lead (in pixels)", 3},
+  {"white-tophat", 'w', 0, 0, "Identify pores using bright regions, instead of dark.", 3},
   
   { 0 }
 };
@@ -74,9 +68,9 @@ static struct argp_option options[] = {
 /* Used by main to communicate with parse_opt. */
 struct arguments
 {
-  char *hdf_filename, *source, *dest_lead, *dest_pores;
-  DIM min_pore_size, max_pore_size, min_lead_size, max_lead_size;
-  int n_threads, quiet, verbose, no_lead, no_pores;
+  char *hdf_filename, *source, *dest;
+  DIM min_pore_size, max_pore_size;
+  int n_threads, quiet, verbose, white_tophat;
 };
 
 /* Parse a single option. */
@@ -101,14 +95,6 @@ parse_opt (int key, char *arg, struct argp_state *state)
       arguments->verbose = TRUE;
       break;
 
-    case OPT_NO_PORES:
-      arguments->no_pores = TRUE;
-      break;
-
-    case OPT_NO_LEAD:
-      arguments->no_lead = TRUE;
-      break;      
-
     case OPT_MIN_PORE_SIZE:
       arguments->min_pore_size = atoi(arg);
       break;
@@ -117,24 +103,16 @@ parse_opt (int key, char *arg, struct argp_state *state)
       arguments->max_pore_size = atoi(arg);
       break;
 
-    case OPT_MIN_LEAD_SIZE:
-      arguments->min_lead_size = atoi(arg);
-      break;
-
-    case OPT_MAX_LEAD_SIZE:
-      arguments->max_lead_size = atoi(arg);
-      break;
-
     case 's':
       arguments->source = arg;
       break;
 
-    case OPT_DEST_PORES:
-      arguments->dest_pores = arg;
-      break;
+    case 'w':
+      arguments->white_tophat = TRUE;
+      break;      
 
-    case OPT_DEST_LEAD:
-      arguments->dest_lead = arg;
+    case OPT_DEST:
+      arguments->dest = arg;
       break;
 
     case ARGP_KEY_ARG:
@@ -168,16 +146,12 @@ int main(int argc, char *argv[]) {
   /* Default option values. */
   arguments.min_pore_size = PORE_MIN_SIZE;
   arguments.max_pore_size = PORE_MAX_SIZE;
-  arguments.min_lead_size = LEAD_MIN_SIZE;
-  arguments.max_lead_size = LEAD_MAX_SIZE;
   arguments.n_threads = get_nprocs() * 2;
   arguments.quiet = FALSE;
   arguments.verbose = FALSE;
-  arguments.no_lead = FALSE;
-  arguments.no_pores = FALSE;
   arguments.source = strdup(SOURCE_NAME);
-  arguments.dest_pores = strdup(DEST_NAME_PORES);
-  arguments.dest_lead = strdup(DEST_NAME_LEAD);
+  arguments.dest = strdup(DEST_NAME_PORES);
+  arguments.white_tophat = FALSE;
 
   /* Parse our arguments; every option seen by parse_opt will
      be reflected in arguments. */
@@ -195,50 +169,29 @@ int main(int argc, char *argv[]) {
       printf("Number of threads: %d\n", config.n_threads);
       printf("Quiet: %d\n", config.quiet);
       printf("Verbose: %d\n", config.verbose);
-      printf("Skip lead: %d\n", arguments.no_lead);
-      printf("Skip pores: %d\n", arguments.no_pores);
     }
     printf("Source dataset: %s\n", arguments.source);
-    if ((!arguments.no_pores) || config.verbose) {
-      printf("Pores destination dataset: %s\n", arguments.dest_pores);
+    printf("Tophat color: %s\n", arguments.white_tophat ? "white" : "black");
+    if (config.verbose) {
+      printf("Pores destination dataset: %s\n", arguments.dest);
       printf("Min pore size: %lu\n", arguments.min_pore_size);
       printf("Max pore size: %lu\n", arguments.max_pore_size);
-    }
-    if ((!arguments.no_lead) || config.verbose) {
-      printf("Lead destination dataset: %s\n", arguments.dest_lead);
-      printf("Min lead size: %lu\n", arguments.min_lead_size);
-      printf("Max lead size: %lu\n", arguments.max_lead_size);
     }
   }
 
   // Validate the supplied options  
-  if (!arguments.no_pores) {
-    // Make sure min and max sizes are in the right order
-    if (arguments.min_pore_size >= arguments.max_pore_size) {
-      printf("Error: Max pore size (%ld) must be larger than min pore size (%lu).\n",
-	     arguments.max_pore_size, arguments.min_pore_size);
-      return -1;
-    }
-    // Check that kernel sizes are odd
-    if (!(arguments.min_pore_size % 2) && (!config.quiet))
-      printf("Warning: Min pore size (%lu) should be an odd number.\n", arguments.min_pore_size);
-    if (!(arguments.max_pore_size % 2) && (!config.quiet))
-      printf("Warning: Max pore size (%lu) should be an odd number.\n", arguments.max_pore_size);
+  // Make sure min and max sizes are in the right order
+  if (arguments.min_pore_size >= arguments.max_pore_size) {
+    printf("Error: Max pore size (%ld) must be larger than min pore size (%lu).\n",
+	   arguments.max_pore_size, arguments.min_pore_size);
+    return -1;
   }
-  if (!arguments.no_lead) {
-    // Validate the supplied options
-    if (arguments.min_lead_size >= arguments.max_lead_size) {
-      printf("Error: Max lead size (%lu) must be larger than min lead size (%lu).\n",
-	     arguments.max_lead_size, arguments.min_lead_size);
-      return -1;
-    }
-    // Check that kernel sizes are odd
-    if (!(arguments.min_lead_size % 2) && (!config.quiet))
-      printf("Warning: Min lead size (%lu) should be an odd number.\n", arguments.min_lead_size);
-    if (!(arguments.max_lead_size % 2) && (!config.quiet))
-      printf("Warning: Max lead size (%lu) should be an odd number.\n", arguments.max_lead_size);
-  }
-  
+  // Check that kernel sizes are odd
+  if (!(arguments.min_pore_size % 2) && (!config.quiet))
+    printf("Warning: Min pore size (%lu) should be an odd number.\n", arguments.min_pore_size);
+  if (!(arguments.max_pore_size % 2) && (!config.quiet))
+    printf("Warning: Max pore size (%lu) should be an odd number.\n", arguments.max_pore_size);
+ 
   // Open the HDF5 file
   hid_t h5fp = H5Fopen(arguments.hdf_filename, // File name to be opened
 		       H5F_ACC_RDWR,        // file access mode
@@ -338,37 +291,20 @@ int main(int argc, char *argv[]) {
 
   // Prepare and segment the pores
   char return_val = 0;
-  if (!arguments.no_pores) {
-    hid_t dst_ds_pores;
-    char result_pores = 0;
-    // Create a new destination dataset
-    dst_ds_pores = tomopore::replace_dataset(arguments.dest_pores, h5fp, src_space, src_type);
-    // Apply the morpohology filters to extract the pore and lead structures
-    result_pores = tomopore::extract_pores(src_ds, dst_ds_pores, h5fp, arguments.dest_pores,
-					   arguments.min_pore_size, arguments.max_pore_size);
-    // Close dataset
-    H5Dclose(dst_ds_pores);
-    // Check if the pore structure extraction finished successfully
-    if (result_pores < 0) {
-      fprintf(stderr, "Failed to extract pores %s: %d\n", arguments.source, result_pores);
-      return_val = -1;
-    }
-  }
-  if (!arguments.no_lead) {
-    hid_t dst_ds_lead;
-    char result_lead = 0;
-    // Create a new destination dataset
-    dst_ds_lead = tomopore::replace_dataset(arguments.dest_lead, h5fp, src_space, src_type);
-    // Apply the morpohology filters to extract the pore and lead structures
-    result_lead = tomopore::extract_lead(src_ds, dst_ds_lead, h5fp, arguments.dest_lead,
-					 arguments.min_lead_size, arguments.max_lead_size);
-    // Close destination dataset
-    H5Dclose(dst_ds_lead);
-    // Check if the free-lead extraction finished successfully
-    if (result_lead < 0) {
-      fprintf(stderr, "Failed to extract lead %s: %d\n", arguments.source, result_lead);
-      return_val = -1;
-    }
+  hid_t dst_ds_pores;
+  char result_pores = 0;
+  // Create a new destination dataset
+  dst_ds_pores = tomopore::replace_dataset(arguments.dest, h5fp, src_space, src_type);
+  // Apply the morpohology filters to extract the pore and lead structures
+  result_pores = tomopore::extract_pores(src_ds, dst_ds_pores, h5fp, arguments.dest,
+					 arguments.min_pore_size, arguments.max_pore_size,
+					 arguments.white_tophat);
+  // Close dataset
+  H5Dclose(dst_ds_pores);
+  // Check if the pore structure extraction finished successfully
+  if (result_pores < 0) {
+    fprintf(stderr, "Failed to extract pores %s: %d\n", arguments.source, result_pores);
+    return_val = -1;
   }
   // Close all the common datasets, dataspaces, etc
   H5Dclose(src_ds);
